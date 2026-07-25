@@ -60,3 +60,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# expo web export (what Amplify publishes; ~2.7 MB, rebuilt every deploy)
+/dist

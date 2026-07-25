@@ -6,6 +6,11 @@ frontend:
         - nvm use 22
         - 'if [ -z "$EXPO_PUBLIC_API_URL" ]; then echo "Missing required Amplify environment variable: EXPO_PUBLIC_API_URL"; exit 1; fi'
         - npm ci
+        # Metro strips types without checking them, so a broken import or a
+        # changed signature bundles happily and fails at the first tap. Five
+        # such defects reached a branch this way, including a deleted export
+        # the wearable simulator still imported. Fail the deploy instead.
+        - npx tsc --noEmit
     build:
       commands:
         - npx expo export --platform web

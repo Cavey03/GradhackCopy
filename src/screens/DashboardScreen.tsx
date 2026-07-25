@@ -28,6 +28,39 @@ type CategoryType = 'Recovery' | 'Strain' | 'Sleep' | 'Heart' | 'AI Plan' | 'Pro
 const titleCase = (s: string) =>
   (s || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
+/**
+ * One label/value line in the profile. Renders nothing at all when the value
+ * is absent — a member record that lacks a field should show a shorter list,
+ * not a list padded with dashes that read like missing data.
+ */
+function ProfileRow({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value?: string | number | null;
+  tone?: 'good' | 'bad';
+}) {
+  if (value === undefined || value === null || value === '') return null;
+  const text = String(value);
+  if (!text.trim() || text === 'undefined') return null;
+  return (
+    <View style={styles.explainRow}>
+      <Text style={styles.explainLabel}>{label}</Text>
+      <Text
+        style={[
+          styles.explainVal,
+          tone === 'good' && { color: '#10B981' },
+          tone === 'bad' && { color: '#DC2626' },
+        ]}
+      >
+        {text}
+      </Text>
+    </View>
+  );
+}
+
 export default function DashboardScreen({ navigation, route }: any) {
   const entityNumber = route?.params?.entityNumber || 'ENT000122';
   const [data, setData] = useState<RecoveryData>(route?.params?.initialData || OPTIMAL_STATE);
@@ -37,6 +70,7 @@ export default function DashboardScreen({ navigation, route }: any) {
 
   // "Optimal" vs "at risk" is derived directly from the data
   const isOptimal = data.setback_probability < 0.4;
+  const m = data.member;
 
   // If Login didn't pass data (e.g. deep link during dev), fetch it live
   useEffect(() => {
@@ -426,34 +460,84 @@ export default function DashboardScreen({ navigation, route }: any) {
               <Text style={styles.profileIdText}>Database Entity ID: {entityNumber}</Text>
             </View>
 
+            {/* Membership chips, shown only when the record carries them */}
+            {(!!m?.vitalityStatus || !!m?.age || !!m?.gender) && (
+              <View style={styles.chipWrap}>
+                {!!m?.vitalityStatus && (
+                  <Text style={[styles.profileChip, styles.profileChipAccent]}>
+                    {m.vitalityStatus}
+                  </Text>
+                )}
+                {!!m?.age && <Text style={styles.profileChip}>{Math.round(m.age)} yrs</Text>}
+                {!!m?.gender && <Text style={styles.profileChip}>{m.gender}</Text>}
+                {!!m?.city && <Text style={styles.profileChip}>{m.city}</Text>}
+              </View>
+            )}
+
             <View style={styles.divider} />
 
-            <View style={styles.explainRow}>
-              <Text style={styles.explainLabel}>First Name:</Text>
-              <Text style={styles.explainVal}>{data.member?.firstName || '—'}</Text>
-            </View>
+            {/* Every row is conditional: an absent field is omitted rather than
+                printed as a dash, so the record never implies data it lacks. */}
+            <Text style={styles.profileSection}>RECOVERY</Text>
+            <ProfileRow label="Goal" value={m?.recoveryGoal} />
+            <ProfileRow label="Activity baseline" value={m?.activityBaseline} />
+            <ProfileRow label="Recovery stage" value={m?.recoveryStageText ?? `Stage ${data.recovery_stage}`} />
+            <ProfileRow label="Baseline VO₂ max" value={`${data.vo2_max_baseline} mL/kg/min`} />
+            <ProfileRow label="Current VO₂ max" value={`${data.vo2_max_current} mL/kg/min`} />
+            {data.vo2_forecast_4_weeks != null && (
+              <ProfileRow
+                label="VO₂ forecast (4 sessions)"
+                value={`${data.vo2_forecast_4_weeks} mL/kg/min${
+                  data.vo2_predicted_change != null
+                    ? ` (${data.vo2_predicted_change >= 0 ? '+' : ''}${data.vo2_predicted_change})`
+                    : ''
+                }`}
+              />
+            )}
 
-            <View style={styles.explainRow}>
-              <Text style={styles.explainLabel}>Surname:</Text>
-              <Text style={styles.explainVal}>{data.member?.surname || '—'}</Text>
-            </View>
+            <Text style={styles.profileSection}>CLINICAL RECORD</Text>
+            <ProfileRow label="Condition" value={m?.conditionCategory} />
+            <ProfileRow label="Diagnosis / event" value={m?.diagnosisOrEvent} />
+            <ProfileRow label="Event type" value={m?.eventType} />
+            <ProfileRow label="Event date" value={m?.eventDate} />
+            <ProfileRow label="Severity" value={m?.severity} />
+            <ProfileRow label="Medication impact" value={m?.medicationImpact} />
+            <ProfileRow
+              label="Intake pain score"
+              value={m?.intakePainScore != null ? `${m.intakePainScore}/10` : undefined}
+            />
 
-            <View style={styles.explainRow}>
-              <Text style={styles.explainLabel}>Active Injury / Diagnosis:</Text>
-              <Text style={[styles.explainVal, { color: isOptimal ? '#10B981' : '#DC2626' }]}>
-                {data.member?.injury || 'None'}
-              </Text>
-            </View>
+            <Text style={styles.profileSection}>SAFETY FLAGS</Text>
+            <ProfileRow
+              label="Clinician cleared"
+              value={m?.clinicianCleared}
+              tone={String(m?.clinicianCleared).toLowerCase() === 'no' ? 'bad' : 'good'}
+            />
+            <ProfileRow
+              label="Contraindication"
+              value={m?.contraindicationFlag}
+              tone={String(m?.contraindicationFlag).toLowerCase() === 'yes' ? 'bad' : 'good'}
+            />
+            <ProfileRow label="Mobility limitation" value={m?.mobilityLimitation} />
+            <ProfileRow
+              label="VO₂ risk band"
+              value={m?.vo2RiskBand}
+              tone={String(m?.vo2RiskBand).toLowerCase() === 'high' ? 'bad' : undefined}
+            />
+            <ProfileRow
+              label="Active injury"
+              value={m?.injury}
+              tone={isOptimal ? 'good' : 'bad'}
+            />
 
-            <View style={styles.explainRow}>
-              <Text style={styles.explainLabel}>Clinical Stage:</Text>
-              <Text style={styles.explainVal}>Stage {data.recovery_stage}</Text>
-            </View>
-
-            <View style={styles.explainRow}>
-              <Text style={styles.explainLabel}>Baseline VO₂ Max:</Text>
-              <Text style={styles.explainVal}>{data.vo2_max_baseline} mL/kg/min</Text>
-            </View>
+            {(!!m?.medicalAidPlan || !!m?.joinDate || !!m?.province) && (
+              <>
+                <Text style={styles.profileSection}>MEMBERSHIP</Text>
+                <ProfileRow label="Plan" value={m?.medicalAidPlan} />
+                <ProfileRow label="Province" value={m?.province} />
+                <ProfileRow label="Member since" value={m?.joinDate} />
+              </>
+            )}
           </View>
         )}
 
@@ -778,6 +862,19 @@ const styles = StyleSheet.create({
   planTitle: { fontSize: 22, fontWeight: '900', color: '#FFFFFF', marginTop: 8, letterSpacing: -0.5 },
   planSub: { fontSize: 13, fontWeight: '700', color: '#E11082', marginTop: 4 },
   coachingMsg: { fontSize: 14, fontStyle: 'italic', color: '#E2E8F0', marginTop: 12, lineHeight: 20 },
+
+  // --- profile ---
+  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 },
+  profileChip: {
+    fontSize: 11, fontWeight: '700', color: '#475569', backgroundColor: '#F1F5F9',
+    borderRadius: 8, paddingVertical: 4, paddingHorizontal: 9, marginRight: 6, marginBottom: 6,
+    overflow: 'hidden',
+  },
+  profileChipAccent: { color: '#FFFFFF', backgroundColor: '#6366F1' },
+  profileSection: {
+    fontSize: 10, fontWeight: '900', color: '#94A3B8', letterSpacing: 1,
+    marginTop: 18, marginBottom: 4,
+  },
 
   // --- AI Plan tab: compact header + generate control ---
   planHeaderRow: {

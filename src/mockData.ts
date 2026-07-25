@@ -1,10 +1,46 @@
 // src/mockData.ts
 
+/**
+ * Everything below the first four fields is optional because it is read
+ * straight from the DynamoDB member item and rendered only when present. The
+ * seeded population fills these on 98-100% of members, but a member created
+ * through /onboarding carries far fewer, so the screen must never assume.
+ */
 export interface MemberProfile {
   memberId: string;
   firstName?: string;
   surname?: string;
   injury?: string;
+
+  // --- personal ---
+  age?: number;
+  gender?: string;
+  dob?: string;
+  city?: string;
+  province?: string;
+
+  // --- membership ---
+  vitalityStatus?: string;
+  medicalAidPlan?: string;
+  joinDate?: string;
+
+  // --- recovery ---
+  recoveryGoal?: string;
+  activityBaseline?: string;
+
+  // --- clinical context (from recoveryContext) ---
+  conditionCategory?: string;
+  diagnosisOrEvent?: string;
+  eventType?: string;
+  eventDate?: string;
+  severity?: string;
+  recoveryStageText?: string;
+  mobilityLimitation?: string;
+  medicationImpact?: string;
+  vo2RiskBand?: string;
+  clinicianCleared?: string;
+  contraindicationFlag?: string;
+  intakePainScore?: number;
 }
 
 export interface ActivityItem {

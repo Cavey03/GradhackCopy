@@ -114,12 +114,39 @@ interface BackendActivity {
 }
 
 interface BackendDashboard {
+  // The raw DynamoDB member item. The backend returns it whole, so anything
+  // the seed wrote is already on the wire — these fields are declared, not
+  // newly fetched.
   member: {
     memberId: string;
     firstName?: string;
     surname?: string;
     injury?: string;
     vo2max?: { baseline?: number; current?: number };
+    age?: number;
+    gender?: string;
+    dob?: string;
+    city?: string;
+    province?: string;
+    vitalityStatus?: string;
+    medicalAidPlan?: string;
+    joinDate?: string;
+    recoveryGoal?: string;
+    activityBaseline?: string;
+    recoveryContext?: {
+      conditionCategory?: string;
+      diagnosisOrEvent?: string;
+      eventType?: string;
+      eventDate?: string;
+      severity?: string;
+      recoveryStage?: string;
+      mobilityLimitation?: string;
+      medicationImpact?: string;
+      vo2RiskBand?: string;
+      clinicianCleared?: string;
+      contraindicationFlag?: string;
+      painScore?: number;
+    };
   };
   latestCheckin: Record<string, unknown> | null;
   recentReadings?: BackendReading[];
@@ -270,6 +297,7 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
   // rendering that would put a fabricated week in front of the member — the
   // same silent-mock problem the dataSource badge exists to prevent.
   const exercisePlan = p.exercise_plan ?? d.exercisePlan;
+  const ctx = d.member.recoveryContext ?? {};
 
   return {
     dataSource: 'LIVE_API',
@@ -283,6 +311,33 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
       firstName: d.member.firstName ?? template.member?.firstName,
       surname: d.member.surname ?? template.member?.surname,
       injury: d.member.injury ?? (atRisk ? 'Elevated Strain Risk' : 'None / Cleared'),
+
+      // Passed through verbatim. Left undefined when the member item does not
+      // carry them, so the Profile tab can omit a row rather than print a
+      // placeholder that looks like missing data.
+      age: num(d.member.age) ? d.member.age : undefined,
+      gender: d.member.gender,
+      dob: d.member.dob,
+      city: d.member.city,
+      province: d.member.province,
+      vitalityStatus: d.member.vitalityStatus,
+      medicalAidPlan: d.member.medicalAidPlan,
+      joinDate: d.member.joinDate,
+      recoveryGoal: d.member.recoveryGoal,
+      activityBaseline: d.member.activityBaseline,
+
+      conditionCategory: ctx.conditionCategory,
+      diagnosisOrEvent: ctx.diagnosisOrEvent,
+      eventType: ctx.eventType,
+      eventDate: ctx.eventDate,
+      severity: ctx.severity,
+      recoveryStageText: ctx.recoveryStage,
+      mobilityLimitation: ctx.mobilityLimitation,
+      medicationImpact: ctx.medicationImpact,
+      vo2RiskBand: ctx.vo2RiskBand,
+      clinicianCleared: ctx.clinicianCleared,
+      contraindicationFlag: ctx.contraindicationFlag,
+      intakePainScore: num(ctx.painScore) ? ctx.painScore : undefined,
     },
     recentActivities,
     sleep,

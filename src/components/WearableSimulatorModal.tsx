@@ -111,6 +111,9 @@ export default function WearableSimulatorModal({ visible, onClose, memberId, bas
 
   const start = useMemo<WearableBaseline>(() => ({ ...DEFAULT_BASELINE, ...baseline }), [baseline]);
   const current = useMemo(() => applyScenario(start, scenario, step), [start, scenario, step]);
+  // State one step back, so the preview can show before -> after. At step 1
+  // this is the baseline itself.
+  const previous = useMemo(() => applyScenario(start, scenario, step - 1), [start, scenario, step]);
 
   // Advance the date so each step extends the trend rather than overwriting
   // the same day; rolling 3-session features need distinct dates.
@@ -169,15 +172,15 @@ export default function WearableSimulatorModal({ visible, onClose, memberId, bas
   const nextStep = () => { setStep((s) => s + 1); setState('idle'); setResult(null); };
   const reset = () => { setStep(1); setState('idle'); setResult(null); };
 
-  const rows: [string, string][] = [
-    ['Resting HR', `${current.restingHr} bpm`],
-    ['HRV', `${current.hrvMs} ms`],
-    ['Sleep', `${current.sleepHours} h`],
-    ['VO₂ max', `${current.vo2max}`],
-    ['Steps', `${current.steps}`],
-    ['Active minutes', `${current.activeMinutes} min`],
-    ['Pain', `${current.pain} / 10`],
-    ['Fatigue', `${current.fatigue} / 10`],
+  const rows: { key: keyof WearableBaseline; label: string; unit: string; higherIsBetter: boolean }[] = [
+    { key: 'restingHr', label: 'Resting HR', unit: 'bpm', higherIsBetter: false },
+    { key: 'hrvMs', label: 'HRV', unit: 'ms', higherIsBetter: true },
+    { key: 'sleepHours', label: 'Sleep', unit: 'h', higherIsBetter: true },
+    { key: 'vo2max', label: 'VO₂ max', unit: '', higherIsBetter: true },
+    { key: 'steps', label: 'Steps', unit: '', higherIsBetter: true },
+    { key: 'activeMinutes', label: 'Active minutes', unit: 'min', higherIsBetter: true },
+    { key: 'pain', label: 'Pain', unit: '/ 10', higherIsBetter: false },
+    { key: 'fatigue', label: 'Fatigue', unit: '/ 10', higherIsBetter: false },
   ];
 
   return (
@@ -222,14 +225,29 @@ export default function WearableSimulatorModal({ visible, onClose, memberId, bas
               ))}
             </View>
 
-            <Text style={s.section}>Preview — will be sent</Text>
+            <Text style={s.section}>
+              Preview — {step === 1 ? 'baseline' : `step ${step - 1}`} → step {step}
+            </Text>
             <View style={s.card}>
-              {rows.map(([label, value]) => (
-                <View key={label} style={s.row}>
-                  <Text style={s.rowLabel}>{label}</Text>
-                  <Text style={s.rowValue}>{value}</Text>
-                </View>
-              ))}
+              {rows.map(({ key, label, unit, higherIsBetter }) => {
+                const before = previous[key];
+                const after = current[key];
+                const change = after - before;
+                const color =
+                  change === 0 ? '#94A3B8'
+                    : (change > 0) === higherIsBetter ? '#16A34A' : '#DC2626';
+                return (
+                  <View key={key} style={s.row}>
+                    <Text style={s.rowLabel}>{label}</Text>
+                    <View style={s.rowValues}>
+                      <Text style={s.rowBefore}>{before}</Text>
+                      <Text style={[s.rowArrow, { color }]}>→</Text>
+                      <Text style={[s.rowValue, { color }]}>{after}</Text>
+                      {unit ? <Text style={s.rowUnit}>{unit}</Text> : null}
+                    </View>
+                  </View>
+                );
+              })}
               <Text style={s.stamp}>timestamp {stamp}</Text>
             </View>
 
@@ -307,9 +325,13 @@ const s = StyleSheet.create({
   chipText: { fontSize: 13, fontWeight: '600', color: '#334155' },
   blurb: { fontSize: 12, color: '#64748B', marginTop: 8 },
   card: { backgroundColor: '#F8FAFC', borderRadius: 12, padding: 14, marginTop: 8, borderWidth: 1, borderColor: '#F1F5F9' },
-  row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 5 },
   rowLabel: { fontSize: 13, color: '#64748B' },
+  rowValues: { flexDirection: 'row', alignItems: 'center' },
+  rowBefore: { fontSize: 13, color: '#94A3B8' },
+  rowArrow: { fontSize: 12, marginHorizontal: 6 },
   rowValue: { fontSize: 13, fontWeight: '700', color: '#0F172A' },
+  rowUnit: { fontSize: 11, color: '#94A3B8', marginLeft: 4 },
   stamp: { fontSize: 10, color: '#94A3B8', marginTop: 8 },
   note: { fontSize: 11, color: '#94A3B8', marginTop: 12, lineHeight: 16 },
   status: { fontSize: 13, fontWeight: '600', marginTop: 4 },

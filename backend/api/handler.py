@@ -240,39 +240,6 @@ def handle_activity(event):
     })
 
 
-# ---- Routing ----
-
-MOCK_ROUTES = {
-    ("POST", "/auth/demo"): (200, DEMO_MEMBER),
-    ("POST", "/wearables/simulate"): (201, {"status": "inserted"}),
-    ("POST", "/recovery/infer"): (200, MODEL_PREDICTION),
-    ("POST", "/simulations"): (200, SIMULATION_RESULT),
-    ("POST", "/coach/messages"): (200, COACH_MESSAGE),
-}
-
-REAL_ROUTES = {
-    ("POST", "/onboarding"): handle_onboarding,
-    ("POST", "/checkins"): handle_checkin,
-    ("POST", "/activities"): handle_activity,
-    ("GET", "/dashboard"): handle_dashboard,
-}
-
-
-def lambda_handler(event, context):
-    method = event.get("httpMethod", "")
-    path = event.get("path", "")
-
-    handler = REAL_ROUTES.get((method, path))
-    if handler:
-        return handler(event)
-
-    route = MOCK_ROUTES.get((method, path))
-    if route:
-        status, body = route
-        return _response(status, body)
-
-    return _response(404, {"error": "not_found", "method": method, "path": path})
-
 def handle_wearable_simulate(event):
     body = _parse_body(event)
     if body is None:
@@ -309,3 +276,37 @@ def handle_wearable_simulate(event):
             written.append(item["sk"])
 
     return _response(201, {"status": "inserted", "count": len(written), "sks": written})
+
+
+# ---- Routing ----
+
+MOCK_ROUTES = {
+    ("POST", "/auth/demo"): (200, DEMO_MEMBER),
+    ("POST", "/recovery/infer"): (200, MODEL_PREDICTION),
+    ("POST", "/simulations"): (200, SIMULATION_RESULT),
+    ("POST", "/coach/messages"): (200, COACH_MESSAGE),
+}
+
+REAL_ROUTES = {
+    ("POST", "/onboarding"): handle_onboarding,
+    ("POST", "/checkins"): handle_checkin,
+    ("POST", "/activities"): handle_activity,
+    ("POST", "/wearables/simulate"): handle_wearable_simulate,
+    ("GET", "/dashboard"): handle_dashboard,
+}
+
+
+def lambda_handler(event, context):
+    method = event.get("httpMethod", "")
+    path = event.get("path", "")
+
+    handler = REAL_ROUTES.get((method, path))
+    if handler:
+        return handler(event)
+
+    route = MOCK_ROUTES.get((method, path))
+    if route:
+        status, body = route
+        return _response(status, body)
+
+    return _response(404, {"error": "not_found", "method": method, "path": path})

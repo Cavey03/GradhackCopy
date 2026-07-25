@@ -59,24 +59,24 @@ interface BackendReading {
   sk: string;
   sleepHours?: number;
   sleepQualityScore?: number;
-  restingHeartRate?: number; // seeded spelling
-  restingHr?: number; // /wearables/simulate spelling
+  restingHeartRate?: number;
+  restingHr?: number;
   hrvMs?: number;
-  vo2MaxEstimate?: number; // seeded spelling
-  vo2max?: number; // /wearables/simulate spelling
+  vo2MaxEstimate?: number;
+  vo2max?: number;
 }
 
 interface BackendActivity {
   sk: string;
-  workoutType?: string; // seeded spelling
-  activityType?: string; // app-written spelling
-  durationMin?: number; // seeded spelling
-  durationMinutes?: number; // app-written spelling
+  workoutType?: string;
+  activityType?: string;
+  durationMin?: number;
+  durationMinutes?: number;
   avgHeartRate?: number;
   maxHeartRate?: number;
   caloriesBurned?: number;
-  rpe?: number; // seeded spelling
-  perceivedExertion?: number; // app-written spelling
+  rpe?: number;
+  perceivedExertion?: number;
   distanceKm?: number;
   distance?: number;
 }
@@ -110,7 +110,7 @@ interface BackendSimulation {
   comparison: {
     setback_probability_proposed: number;
     setback_probability_recommended: number;
-    verdict: string; // e.g. "not_advised"
+    verdict: string;
     saferAlternative: { activity: string; durationMinutes: number; intensity: string };
   };
 }
@@ -121,7 +121,7 @@ export class MemberNotFoundError extends Error {
   }
 }
 
-// ---------- Fetch helper (with real timeout; RN fetch has no timeout option) ----------
+// ---------- Fetch helper (with real timeout) ----------
 
 async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
   const controller = new AbortController();
@@ -173,6 +173,7 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
       distanceKm: act.distanceKm ?? act.distance ?? null,
     };
   });
+
   const sleepNights = readings.map((r) => r.sleepHours).filter(num);
   const sleep = sleepNights.length
     ? { latestHours: sleepNights[0], avgHours: round1(avg(sleepNights)), nights: sleepNights.length }
@@ -211,7 +212,6 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
 
   return {
     dataSource: 'LIVE_API',
-    // Falls back to 'fallback' for predictions stored before the coach layer.
     coachSource: p.coach_source ?? 'fallback',
     member: {
       memberId: d.member.memberId,
@@ -223,6 +223,7 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
     sleep,
     heart,
     strain,
+    recentActivities,
     lastReadingDate,
     recovery_score: p.recovery_score,
     readiness_score: p.readiness_score,
@@ -262,8 +263,6 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
 
 /**
  * Fetch the dashboard for a member.
- * - Throws MemberNotFoundError if the memberId doesn't exist (so Login can say so).
- * - Falls back to mock data on network failure (demo never breaks).
  */
 export async function fetchDashboardData(memberId: string): Promise<RecoveryData> {
   try {
@@ -283,16 +282,13 @@ export async function fetchDashboardData(memberId: string): Promise<RecoveryData
 }
 
 export interface CheckInDetails {
-  sleepQuality: number; // 1-5 (5 = restful)
-  soreness: number; // 1-5 (5 = severe)
-  energy: number; // 1-5 (5 = energized)
+  sleepQuality: number;
+  soreness: number;
+  energy: number;
   symptoms: string[];
+  timestamp?: string;
 }
 
-/**
- * Persist a daily check-in to DynamoDB (CHECKIN# item). Never throws:
- * returns { recorded: false } on failure so the demo flow can't block.
- */
 export async function submitCheckIn(
   memberId: string,
   details: CheckInDetails,
@@ -338,7 +334,7 @@ export async function submitCheckIn(
       },
     };
   } catch (error) {
-    console.warn('⚠️ Check-in not persisted (API unreachable).', error);
+    console.warn('⚠️ Wearable reading not persisted (API unreachable).', error);
     return { recorded: false };
   }
 }
@@ -350,10 +346,6 @@ export interface SimulationVerdict {
   bedrockRationale: string;
 }
 
-/**
- * Ask the backend to evaluate a proposed activity ("can I run 5km?").
- * Returns null on failure so the screen can fall back to its local logic.
- */
 export async function evaluateActivity(
   memberId: string,
   question: string,

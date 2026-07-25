@@ -12,10 +12,12 @@ import {
   KeyboardAvoidingView 
 } from 'react-native';
 import { Sparkles, ArrowLeft, ShieldCheck, AlertTriangle, Send, CheckCircle2, XCircle, AlertCircle } from 'lucide-react-native';
-import { evaluateActivity, MOCK_FALLBACK_ENABLED } from '../api';
+import { evaluateActivity } from '../api';
+import WearableSimulatorModal from '../components/WearableSimulatorModal';
 
 export default function SimulatorScreen({ navigation, route }: any) {
   const entityNumber = route?.params?.entityNumber || 'ENT000122';
+  const [wearableDemoVisible, setWearableDemoVisible] = useState(false);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -101,6 +103,20 @@ export default function SimulatorScreen({ navigation, route }: any) {
             <Text style={styles.navSub}>Ask what you're allowed to do today</Text>
           </View>
         </View>
+
+        {/* PRESENTER TOOL: step the wearable trend and watch the pipeline respond */}
+        <TouchableOpacity
+          style={demoBtn.button}
+          onPress={() => setWearableDemoVisible(true)}
+        >
+          <Text style={demoBtn.text}>▶  Recovery Trend Simulator (Demo)</Text>
+        </TouchableOpacity>
+
+        <WearableSimulatorModal
+          visible={wearableDemoVisible}
+          onClose={() => setWearableDemoVisible(false)}
+          memberId={entityNumber}
+        />
 
         {/* INPUT CARD */}
         <View style={styles.card}>
@@ -196,6 +212,15 @@ export default function SimulatorScreen({ navigation, route }: any) {
     </KeyboardAvoidingView>
   );
 }
+
+// Kept separate from `styles` so the demo tool can be lifted out cleanly.
+const demoBtn = StyleSheet.create({
+  button: {
+    backgroundColor: '#FEF3C7', borderRadius: 12, paddingVertical: 12,
+    paddingHorizontal: 16, marginBottom: 16, borderWidth: 1, borderColor: '#FDE68A',
+  },
+  text: { color: '#B45309', fontWeight: '800', fontSize: 13, textAlign: 'center' },
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F4F7F9' },

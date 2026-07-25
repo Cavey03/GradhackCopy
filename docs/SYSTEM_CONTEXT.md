@@ -303,8 +303,11 @@ something a validator has to catch.
 ### When it runs
 Generation happens **with inference** on `/checkins` and `/activities`, and the
 result is stored on the `PREDICTION#` item as `coach`, along with
-`coach_provider` and `coach_prompt_version`. Dashboard loads read the stored
-text and never call Gemini.
+`coach_source`, `coach_provider` and `coach_prompt_version`. Dashboard loads
+read the stored text and never call Gemini.
+
+`generate_coach_message()` returns `(prose, source)` — always destructure it;
+it is not a bare dict.
 
 ### Gemini gotchas already hit (don't rediscover these)
 1. **`gemini-2.5-flash` returns 404 for new API keys**, even though ListModels
@@ -323,11 +326,25 @@ text and never call Gemini.
 Current latency: **5.7–6.9s**, `finishReason: STOP`.
 
 ### Is it actually using Gemini?
-`coach_provider` on the prediction says `gemini` when configured — **but that
-reflects the setting, not success.** If generation failed you'll see
-`coach_provider: gemini` *and* the canned fallback wording ("Your updated
-recovery plan is ready."). Real output cites the member's own goal, check-in
-numbers and reason codes. Check the logs:
+Read **`coach_source`** on the prediction — it records what actually wrote the
+text:
+
+| Field | Meaning |
+|---|---|
+| `coach_source` | **`gemini`** or **`fallback`** — what really produced the prose |
+| `coach_provider` | Only echoes the `LLM_PROVIDER` setting. Says `gemini` even when generation failed — do not use it to judge success |
+| `coach_prompt_version` | APO version stamp (`apo-v1`) |
+
+The UI surfaces this too: the rationale card is titled "Gemini AI Rationale"
+when `coachSource === 'gemini'`, and "Standard Guidance (AI Unavailable)"
+otherwise. That is **separate from Marnus's `dataSource` badge**, which tracks
+whether the dashboard fetch reached DynamoDB — the two can disagree, and a
+live fetch with a failed LLM call legitimately shows LIVE DYNAMODB next to
+fallback coaching.
+
+By eye: fallback text always opens "Your updated recovery plan is ready." or
+"Today is a recovery day."; real output cites the member's own goal, their
+check-in numbers, and the reason codes.
 
 ```bash
 aws logs tail /aws/lambda/RecoveryPlatformStack-ApiFnE0725F78-KIYezPWTw6wR \
@@ -356,9 +373,19 @@ and the API has no authorizer.
 - **What-if simulator** — `/simulations` scans the question for words like
   "run", "sprint", "heavy" and returns hardcoded probabilities (0.44 vs 0.19).
   It never invokes a model.
-- **The "AWS Bedrock Rationale" label** — the *text* is now really generated,
-  but by **Gemini, not Bedrock**. Bedrock is blocked outright (see §8) and is
-  not used anywhere in this stack. Rename this label before judging.
+### Two independent status indicators
+- **`dataSource` badge** (green "LIVE DYNAMODB" / amber "MOCK FALLBACK") —
+  whether the dashboard fetch reached the backend.
+- **Rationale card title** — whether Gemini or the fallback wrote the prose.
+
+They are deliberately separate and can disagree. Neither is cosmetic: both
+fallbacks are silent by design, and these labels are the only on-screen tell.
+
+**Naming leftover:** the field behind the rationale card is still
+`explainability.bedrock_rationale` in `mockData.ts` / `api.ts` /
+`DashboardScreen.tsx`. The visible label was corrected; the field name was
+left to avoid colliding with in-flight dashboard work. **Bedrock is not wired
+up anywhere** — don't infer otherwise from that name.
 
 ### The activity recommendation is rules, not ML
 `_plan_activity()` in `inference.py` maps the model's readiness class to an
@@ -486,7 +513,8 @@ without removing anything.
 |---|---|
 | LLM coach (APO + Gemini) | **done** — live, §6a |
 | Set a fresh Gemini key before judging — the current one is short-lived | **required** |
-| Relabel "AWS Bedrock Rationale" → Gemini | unassigned |
+| Relabel "AWS Bedrock Rationale" → Gemini | **done** — plus a truthful `coach_source` |
+| Rename the `bedrock_rationale` field (label fixed, field name stale) | unassigned |
 | Make `/simulations` invoke the model instead of keyword matching | unassigned |
 | Surface `predicted_vo2_4_weeks` in the UI — Model 2's output is unused | unassigned |
 | Replace the activity rule (`_plan_activity`) — see the defect in §7 | teammates |

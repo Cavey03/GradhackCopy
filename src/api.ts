@@ -11,8 +11,29 @@ import {
   PlanEnvelope,
 } from './mockData';
 
-export const BASE_URL =
-  'https://3ist8udh05.execute-api.eu-central-1.amazonaws.com/dev';
+// Amplify builds supply this; a laptop running `npx expo start` usually does
+// not. Throwing when it is absent kills the app at import before any screen
+// renders, which turns a missing .env into "the whole demo is broken". Falling
+// back to the deployed stage URL keeps Amplify configurable without putting a
+// startup landmine in front of anyone who clones the repo.
+const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
+
+const DEFAULT_API_URL = 'https://3ist8udh05.execute-api.eu-central-1.amazonaws.com/dev';
+
+if (!configuredApiUrl) {
+  console.warn(
+    `EXPO_PUBLIC_API_URL is not set; using the default stage URL (${DEFAULT_API_URL}). ` +
+      'Set it in .env or the Amplify environment to point at a different backend.',
+  );
+}
+
+export const BASE_URL = (configuredApiUrl || DEFAULT_API_URL).replace(/\/+$/, '');
+
+// Mock data stays available for local development and deliberate demo builds,
+// but production exports must opt in so an AWS outage cannot look like live data.
+export const MOCK_FALLBACK_ENABLED =
+  process.env.EXPO_PUBLIC_ENABLE_MOCK_FALLBACK === 'true' ||
+  (__DEV__ && process.env.EXPO_PUBLIC_ENABLE_MOCK_FALLBACK !== 'false');
 
 // Warm requests return in well under a second, but a check-in or a first
 // dashboard load invokes the SageMaker serverless endpoint, and a cold
@@ -40,9 +61,13 @@ interface BackendPrediction {
   intensity: string; // "very_low" | "low" | "moderate"
   confidence: number;
   top_factors?: { feature: string; direction: string }[];
+  current_vo2?: number;
+  predicted_vo2_4_weeks?: number;
+  predicted_vo2_change?: number;
   // Set by the backend to whatever actually produced the coaching text.
   // 'not_requested' = no LLM call was made for this prediction.
   coach_source?: 'gemini' | 'fallback' | 'not_requested';
+  coach?: BackendCoach;
   // Present only when the backend has plan generation switched on. The
   // headline fields above are derived from exercise_plan when it exists, so
   // the two can never disagree.
@@ -51,32 +76,39 @@ interface BackendPrediction {
   // The model-derived limits the plan was validated against.
   plan_envelope?: PlanEnvelope;
   // Whether the LLM's plan survived validation against the model's envelope,
-  // or was rejected in favour of the deterministic plan.
+  // was rejected in favour of the deterministic plan, or was never requested.
   plan_source?: 'gemini' | 'rules' | 'not_requested';
+}
+
+interface BackendCoach {
+  summary: string;
+  explanation: string;
+  coaching_message: string;
+  follow_up_question: string;
 }
 
 interface BackendReading {
   sk: string;
   sleepHours?: number;
   sleepQualityScore?: number;
-  restingHeartRate?: number; // seeded spelling
-  restingHr?: number; // /wearables/simulate spelling
+  restingHeartRate?: number;
+  restingHr?: number;
   hrvMs?: number;
-  vo2MaxEstimate?: number; // seeded spelling
-  vo2max?: number; // /wearables/simulate spelling
+  vo2MaxEstimate?: number;
+  vo2max?: number;
 }
 
 interface BackendActivity {
   sk: string;
-  workoutType?: string; // seeded spelling
-  activityType?: string; // app-written spelling
-  durationMin?: number; // seeded spelling
-  durationMinutes?: number; // app-written spelling
+  workoutType?: string;
+  activityType?: string;
+  durationMin?: number;
+  durationMinutes?: number;
   avgHeartRate?: number;
   maxHeartRate?: number;
   caloriesBurned?: number;
-  rpe?: number; // seeded spelling
-  perceivedExertion?: number; // app-written spelling
+  rpe?: number;
+  perceivedExertion?: number;
   distanceKm?: number;
   distance?: number;
 }
@@ -94,18 +126,22 @@ interface BackendDashboard {
   recentActivities?: BackendActivity[];
   oldestReading?: BackendReading | null;
   prediction: BackendPrediction;
-  coach: {
-    summary: string;
-    explanation: string;
-    coaching_message: string;
-    follow_up_question: string;
-  };
+  coach: BackendCoach;
   // Real once the backend generates plans; the static demo plan otherwise.
   weekPlan?: WeekPlanDay[];
   exercisePlan?: ExercisePlan;
   planSource?: 'gemini' | 'rules' | 'not_requested';
 }
 
+interface BackendCheckIn {
+  status: 'recorded';
+  checkinSk: string;
+  prediction: BackendPrediction;
+  coach: BackendCoach;
+}
+
+// Rewritten with the endpoint: /simulations no longer returns a hardcoded
+// comparison, it returns a verdict judged against the model's plan envelope.
 interface BackendSimulation {
   question: string;
   proposed: {
@@ -140,7 +176,7 @@ export class MemberNotFoundError extends Error {
   }
 }
 
-// ---------- Fetch helper (with real timeout; RN fetch has no timeout option) ----------
+// ---------- Fetch helper (with real timeout) ----------
 
 async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
   const controller = new AbortController();
@@ -192,6 +228,7 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
       distanceKm: act.distanceKm ?? act.distance ?? null,
     };
   });
+
   const sleepNights = readings.map((r) => r.sleepHours).filter(num);
   const sleep = sleepNights.length
     ? { latestHours: sleepNights[0], avgHours: round1(avg(sleepNights)), nights: sleepNights.length }
@@ -236,7 +273,6 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
 
   return {
     dataSource: 'LIVE_API',
-    // Falls back to 'fallback' for predictions stored before the coach layer.
     coachSource: p.coach_source ?? 'fallback',
     exercisePlan,
     planEnvelope: exercisePlan ? p.plan_envelope : undefined,
@@ -248,6 +284,7 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
       surname: d.member.surname ?? template.member?.surname,
       injury: d.member.injury ?? (atRisk ? 'Elevated Strain Risk' : 'None / Cleared'),
     },
+    recentActivities,
     sleep,
     heart,
     strain,
@@ -261,7 +298,9 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
     duration_minutes: p.duration_minutes,
     intensity: title(p.intensity),
     vo2_max_baseline: vo2Baseline ?? template.vo2_max_baseline,
-    vo2_max_current: vo2Current ?? template.vo2_max_current,
+    vo2_max_current: p.current_vo2 ?? vo2Current ?? template.vo2_max_current,
+    vo2_forecast_4_weeks: p.predicted_vo2_4_weeks,
+    vo2_predicted_change: p.predicted_vo2_change,
     confidence: p.confidence,
     ai_summary: d.coach.summary,
     ai_coaching_message: d.coach.coaching_message,
@@ -288,8 +327,6 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
 
 /**
  * Fetch the dashboard for a member.
- * - Throws MemberNotFoundError if the memberId doesn't exist (so Login can say so).
- * - Falls back to mock data on network failure (demo never breaks).
  */
 export async function fetchDashboardData(memberId: string): Promise<RecoveryData> {
   try {
@@ -300,8 +337,11 @@ export async function fetchDashboardData(memberId: string): Promise<RecoveryData
     return adaptDashboard(dashboard);
   } catch (error) {
     if (error instanceof MemberNotFoundError) throw error;
-    console.warn('⚠️ AWS API unavailable. Using fallback mock data.', error);
-    return OPTIMAL_STATE;
+    if (MOCK_FALLBACK_ENABLED) {
+      console.warn('⚠️ AWS API unavailable. Using clearly labelled fallback mock data.', error);
+      return OPTIMAL_STATE;
+    }
+    throw error;
   }
 }
 
@@ -310,36 +350,76 @@ export interface CheckInDetails {
   soreness: number; // 1-5 (5 = severe)
   energy: number; // 1-5 (5 = energized)
   symptoms: string[];
-  // Optional. Only the demo simulator sets it, so a simulated check-in lands
-  // on the same date as its simulated wearable reading; the backend defaults
-  // to now when omitted.
+  // Only the demo simulator sets it, so a simulated check-in lands on the same
+  // date as its simulated wearable reading. inference.py keys sessions by
+  // date, so without it a simulated check-in lands on today while the readings
+  // sit in the future and its pain never reaches the model.
   timestamp?: string;
 }
 
 /**
- * Persist a daily check-in to DynamoDB (CHECKIN# item). Never throws:
- * returns { recorded: false } on failure so the demo flow can't block.
+ * Persist a daily check-in. Never throws.
+ *
+ * Returns the raw `prediction` and `coach` (used by the wearable simulator to
+ * show the model reacting) *and*, when `currentData` is supplied, a merged
+ * `data` the dashboard can render directly. Two callers want different shapes;
+ * returning both keeps either free to ignore the other.
  */
 export async function submitCheckIn(
   memberId: string,
   details: CheckInDetails,
-): Promise<{ recorded: boolean; prediction?: BackendPrediction; coach?: BackendDashboard['coach'] }> {
+  currentData?: RecoveryData,
+): Promise<{
+  recorded: boolean;
+  prediction?: BackendPrediction;
+  coach?: BackendCoach;
+  data?: RecoveryData;
+}> {
   try {
-    // The backend re-runs inference on every check-in and returns the fresh
-    // prediction; surfacing it is additive, existing callers can ignore it.
-    const res = await request<{ prediction?: BackendPrediction; coach?: BackendDashboard['coach'] }>(
-      'POST',
-      '/checkins',
-      {
-        memberId,
-        pain: details.soreness,
-        fatigue: 6 - details.energy, // invert: UI collects energy, model wants fatigue
-        confidence: details.sleepQuality,
-        symptoms: details.symptoms,
-        ...(details.timestamp ? { timestamp: details.timestamp } : {}),
+    const response = await request<BackendCheckIn>('POST', '/checkins', {
+      memberId,
+      pain: details.soreness,
+      fatigue: 6 - details.energy, // invert: UI collects energy, model wants fatigue
+      confidence: details.sleepQuality,
+      symptoms: details.symptoms,
+      ...(details.timestamp ? { timestamp: details.timestamp } : {}),
+    });
+    const p = response.prediction;
+    const coach = response.coach ?? p.coach;
+    if (!currentData) {
+      return { recorded: true, prediction: p, coach };
+    }
+    return {
+      recorded: true,
+      prediction: p,
+      coach,
+      data: {
+        ...currentData,
+        dataSource: 'LIVE_API',
+        coachSource: p.coach_source ?? 'fallback',
+        recovery_score: p.recovery_score,
+        readiness_score: p.readiness_score,
+        recovery_stage: p.recovery_stage,
+        recovery_trend: title(p.recovery_trend),
+        setback_probability: p.setback_probability,
+        recommended_activity: title(p.recommended_activity),
+        duration_minutes: p.duration_minutes,
+        intensity: title(p.intensity),
+        confidence: p.confidence,
+        vo2_max_current: p.current_vo2 ?? currentData.vo2_max_current,
+        vo2_forecast_4_weeks: p.predicted_vo2_4_weeks,
+        vo2_predicted_change: p.predicted_vo2_change,
+        ai_summary: coach.summary,
+        ai_coaching_message: coach.coaching_message,
+        explainability: {
+          ...currentData.explainability,
+          primary_factor: p.top_factors?.length
+            ? title(p.top_factors[0].feature)
+            : currentData.explainability.primary_factor,
+          bedrock_rationale: coach.explanation,
+        },
       },
-    );
-    return { recorded: true, prediction: res?.prediction, coach: res?.coach };
+    };
   } catch (error) {
     console.warn('⚠️ Check-in not persisted (API unreachable).', error);
     return { recorded: false };
@@ -349,9 +429,9 @@ export async function submitCheckIn(
 // ---------- Wearable telemetry (demo simulator) ----------
 
 /**
- * One simulated wearable reading. Field names match what the backend writes
- * to READING# items and what the inference script reads, so no mapping is
- * needed anywhere in between. `hrvMs` is optional end-to-end.
+ * One simulated wearable reading. Field names match what the backend writes to
+ * READING# items and what the inference script reads, so no mapping is needed
+ * anywhere in between. `hrvMs` is optional end-to-end.
  */
 export interface WearableReading {
   timestamp: string; // ISO8601; the backend uses it as the READING# sort key
@@ -365,9 +445,8 @@ export interface WearableReading {
 }
 
 /**
- * Persist a simulated wearable reading (READING# item). Never throws:
- * returns { recorded: false } so a partial failure can be reported without
- * blocking the rest of the demo step.
+ * Persist a simulated wearable reading (READING# item). Never throws, so a
+ * partial failure can be reported without blocking the rest of a demo step.
  */
 export async function simulateWearable(
   memberId: string,
@@ -378,6 +457,45 @@ export async function simulateWearable(
     return { recorded: true };
   } catch (error) {
     console.warn('⚠️ Wearable reading not persisted (API unreachable).', error);
+    return { recorded: false };
+  }
+}
+
+// ---------- Exercise logging ----------
+
+export interface ExerciseLog {
+  activityType: string;
+  durationMin: number;
+  distanceKm: number;
+  avgHr: number;
+  maxHr: number;
+}
+
+/**
+ * Persist a manually logged workout (ACTIVITY# item) and re-run inference.
+ *
+ * Field names are translated to the ones handle_activity writes, and the
+ * heart-rate and distance values are included so the Strain view can read them
+ * back — the drawer collects them, so dropping them on the floor would make
+ * the logged workout look emptier than what the member actually entered.
+ */
+export async function submitExerciseLog(
+  memberId: string,
+  log: ExerciseLog,
+): Promise<{ recorded: boolean }> {
+  try {
+    await request('POST', '/activities', {
+      memberId,
+      activityType: log.activityType,
+      durationMinutes: log.durationMin,
+      distanceKm: log.distanceKm,
+      avgHeartRate: log.avgHr,
+      maxHeartRate: log.maxHr,
+      completed: true,
+    });
+    return { recorded: true };
+  } catch (error) {
+    console.warn('⚠️ Exercise log not persisted (API unreachable).', error);
     return { recorded: false };
   }
 }

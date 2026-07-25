@@ -2,25 +2,24 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
 import { OPTIMAL_STATE, WARNING_STATE, RecoveryData } from '../mockData';
-import { fetchDashboardData, submitCheckIn, generatePlan } from '../api';
+import { fetchDashboardData, submitCheckIn, submitExerciseLog, generatePlan } from '../api';
 import { 
   ShieldCheck, 
   AlertTriangle, 
   Sparkles, 
-  ChevronDown, 
-  ChevronUp, 
   Activity, 
   ClipboardCheck,
   Zap,
   Moon,
   Heart,
   LogOut,
-  User
+  User,
+  Plus
 } from 'lucide-react-native';
 import TrendChart from '../components/TrendChart';
 import DailyCheckInModal from '../components/DailyCheckInModal';
 import VitalityScoreRing from '../components/VitalityScoreRing';
-
+import LogExerciseDrawer, { ExerciseLogPayload } from '../components/LogExerciseDrawer';
 
 type CategoryType = 'Recovery' | 'Strain' | 'Sleep' | 'Heart' | 'AI Plan' | 'Profile';
 
@@ -33,8 +32,32 @@ export default function DashboardScreen({ navigation, route }: any) {
   const entityNumber = route?.params?.entityNumber || 'ENT000122';
   const [data, setData] = useState<RecoveryData>(route?.params?.initialData || OPTIMAL_STATE);
   const [activeCategory, setActiveCategory] = useState<CategoryType>('Recovery');
-  const [showExplainability, setShowExplainability] = useState(true);
   const [checkInVisible, setCheckInVisible] = useState(false);
+  const [logDrawerVisible, setLogDrawerVisible] = useState(false);
+
+  // "Optimal" vs "at risk" is derived directly from the data
+  const isOptimal = data.setback_probability < 0.4;
+
+  // If Login didn't pass data (e.g. deep link during dev), fetch it live
+  useEffect(() => {
+    if (!route?.params?.initialData) {
+      fetchDashboardData(entityNumber).then(setData).catch(() => {});
+    }
+  }, [entityNumber]);
+
+  // Refetch whenever this screen regains focus (e.g. returning from Simulator)
+  useEffect(
+    () => navigation.addListener('focus', () => {
+      fetchDashboardData(entityNumber).then(setData).catch(() => {});
+    }),
+    [navigation, entityNumber],
+  );
+
+  const handleLogExerciseSubmit = async (payload: ExerciseLogPayload) => {
+    await submitExerciseLog(entityNumber, payload);
+    fetchDashboardData(entityNumber).then(setData).catch(() => {});
+  };
+
   // Plan generation is the one action that spends an LLM request, so it is
   // never triggered by mount or focus — only by the button on the AI Plan tab.
   const [generating, setGenerating] = useState(false);
@@ -55,26 +78,6 @@ export default function DashboardScreen({ navigation, route }: any) {
     setGenerating(false);
   };
 
-  // "Optimal" vs "at risk" is now derived from the data instead of a toggle
-  const isOptimal = data.setback_probability < 0.4;
-
-  // If Login didn't pass data (e.g. deep link during dev), fetch it live
-  useEffect(() => {
-    if (!route?.params?.initialData) {
-      fetchDashboardData(entityNumber).then(setData).catch(() => {});
-    }
-  }, [entityNumber]);
-
-  // Refetch whenever this screen regains focus, so returning from the
-  // Simulator shows the prediction produced by the simulated data instead of
-  // the stale copy this component still holds.
-  useEffect(
-    () => navigation.addListener('focus', () => {
-      fetchDashboardData(entityNumber).then(setData).catch(() => {});
-    }),
-    [navigation, entityNumber],
-  );
-
   const categories = [
     { id: 'Recovery', label: 'Recovery', color: '#E11082', Icon: Activity },
     { id: 'Strain', label: 'Strain', color: '#00A3E0', Icon: Zap },
@@ -85,684 +88,644 @@ export default function DashboardScreen({ navigation, route }: any) {
   ];
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+    <View style={{ flex: 1 }}>
+      <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
 
-<View style={styles.headerRow}>
-  <Text style={styles.headerTitle}>PulseGuard</Text>
-  
-  {/* DATA SOURCE INDICATOR BADGE */}
-  <View
-    style={[
-      styles.sourceBadge,
-      {
-        backgroundColor:
-          data.dataSource === 'LIVE_API' ? '#DCFCE7' : '#FEF3C7',
-        borderColor:
-          data.dataSource === 'LIVE_API' ? '#16A34A' : '#D97706',
-      },
-    ]}
-  >
-    <View
-      style={[
-        styles.dot,
-        {
-          backgroundColor:
-            data.dataSource === 'LIVE_API' ? '#16A34A' : '#D97706',
-        },
-      ]}
-    />
-    <Text
-      style={[
-        styles.sourceBadgeText,
-        {
-          color:
-            data.dataSource === 'LIVE_API' ? '#15803D' : '#B45309',
-        },
-      ]}
-    >
-      {data.dataSource === 'LIVE_API' ? 'LIVE DYNAMODB' : 'MOCK FALLBACK'}
-    </Text>
-  </View>
-</View>
-
-    {/* TOP BRANDING & EXIT ROW */}
-      <View style={styles.topHeaderRow}>
-        <View style={styles.brandContainer}>
-          <View style={styles.brandIconBox}>
-            <Activity size={20} color="#FFF" />
-          </View>
-          <View>
-            <View style={styles.brandTitleRow}>
-              <Text style={styles.appTitle}>PulseGuard</Text>
-              <View style={styles.aiBadge}>
-                <Sparkles size={10} color="#E11082" />
-                <Text style={styles.aiBadgeText}>AI</Text>
-              </View>
+        {/* STREAMLINED TOP HEADER */}
+        <View style={styles.topHeaderRow}>
+          <View style={styles.brandContainer}>
+            <View style={styles.brandIconBox}>
+              <Activity size={20} color="#FFF" />
             </View>
-            <Text style={styles.subTitle}>Entity: {entityNumber} · Biometric Core</Text>
-          </View>
-        </View>
-
-        <TouchableOpacity 
-          style={styles.exitBtn} 
-          onPress={() => navigation.replace('Login')}
-        >
-          <LogOut size={16} color="#DC2626" />
-          <Text style={styles.exitBtnText}>Exit</Text>
-        </TouchableOpacity>
-      </View>
-
-{/* MAIN ACTION TOOLBAR (What-If AI & Check-In) */}
-<View style={styles.actionToolbar}>
-  <TouchableOpacity 
-    style={styles.toolbarBtnPrimary} 
-    onPress={() => navigation.navigate('Simulator', { entityNumber })}
-  >
-    <Sparkles size={16} color="#FFF" />
-    <Text style={styles.toolbarBtnPrimaryText}>What-If AI Simulator</Text>
-  </TouchableOpacity>
-
-  <TouchableOpacity 
-    style={styles.toolbarBtnSecondary} 
-    onPress={() => setCheckInVisible(true)}
-  >
-    <ClipboardCheck size={16} color="#002B49" />
-    <Text style={styles.toolbarBtnSecondaryText}>Daily Check-In</Text>
-  </TouchableOpacity>
-</View>
-
-      
-
-      {/* MOCK WEARABLE SYNC BANNER */}
-      <View style={styles.syncBanner}>
-        <View style={styles.syncDot} />
-        <Text style={styles.syncText}>
-          {data.lastReadingDate
-            ? `Wearable data · last reading ${data.lastReadingDate}`
-            : 'Garmin Forerunner 955 · Synced 2m ago'}
-        </Text>
-      </View>
-
-      {/* INTERACTIVE VITALITY CATEGORY BUBBLES */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.bubbleContainer}>
-        {categories.map((cat) => {
-          const isActive = activeCategory === cat.id;
-          const CategoryIcon = cat.Icon;
-          return (
-            <TouchableOpacity 
-              key={cat.id} 
-              style={styles.bubbleItem}
-              onPress={() => setActiveCategory(cat.id as CategoryType)}
-              activeOpacity={0.7}
-            >
-              <View 
-                style={[
-                  styles.bubbleCircle, 
-                  isActive ? { backgroundColor: cat.color, borderColor: cat.color } : { backgroundColor: '#FFF', borderColor: '#E2E8F0' }
-                ]}
-              >
-                <CategoryIcon size={20} color={isActive ? '#FFF' : cat.color} />
-              </View>
-              <Text style={[styles.bubbleLabel, isActive && { color: '#002B49', fontWeight: '800' }]}>
-                {cat.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-
-      {/* HEADER */}
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.headerTitle}>PulseGuard AI</Text>
-          <Text style={styles.headerSub}>Active Focus: <Text style={{ color: '#E11082', fontWeight: '800' }}>{activeCategory}</Text></Text>
-        </View>
-        
-        <View style={styles.headerActions}>
-          
-
-          <View style={[styles.statusChip, { backgroundColor: isOptimal ? '#DCFCE7' : '#FEE2E2' }]}>
-            {isOptimal ? <ShieldCheck size={14} color="#16A34A" /> : <AlertTriangle size={14} color="#DC2626" />}
-            <Text style={[styles.statusChipText, { color: isOptimal ? '#16A34A' : '#DC2626' }]}>
-              {data.recovery_trend}
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* DYNAMIC CATEGORY CONTENT */}
-
-      {/* 1. RECOVERY VIEW (Default Hero View) */}
-      {activeCategory === 'Recovery' && (
-        <>
-          <View style={styles.card}>
-            <View style={styles.cardHeaderRow}>
-              <View style={[styles.statusChip, { backgroundColor: isOptimal ? '#E11082' : '#DC2626', marginBottom: 8 }]}>
-                <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '800' }}>
-                  {isOptimal ? 'OPTIMAL RECOVERY' : 'SETBACK RISK ALERT'}
-                </Text>
-              </View>
-            </View>
-
-            <VitalityScoreRing score={data.recovery_score} isOptimal={isOptimal} />
-            <Text style={styles.aiSummary}>{data.ai_summary}</Text>
-          </View>
-
-          <View style={styles.card}>
-            <View style={styles.cardHeaderRow}>
-              <Activity size={16} color="#002B49" />
-              <Text style={[styles.cardTitle, { marginLeft: 6 }]}>7-DAY RECOVERY TREND</Text>
-            </View>
-
-            <TrendChart isOptimal={isOptimal} />
-            <View style={styles.divider} />
-
-            <View style={styles.metricRow}>
-              <View style={styles.metricBox}>
-                <Text style={styles.subText}>Baseline VO₂ Max</Text>
-                <Text style={styles.metricVal}>{data.vo2_max_baseline}</Text>
-              </View>
-              <View style={styles.dividerVertical} />
-              <View style={styles.metricBox}>
-                <Text style={styles.subText}>Current Estimated</Text>
-                <Text style={[styles.metricVal, { color: isOptimal ? '#002B49' : '#E11082' }]}>
-                  {data.vo2_max_current}
-                </Text>
-              </View>
-            </View>
-          </View>
-        </>
-      )}
-
-      {/* 2. STRAIN VIEW */}
-{activeCategory === 'Strain' && (
-  <>
-    <View style={styles.card}>
-      <View style={styles.cardHeaderRow}>
-        <Zap size={18} color="#00A3E0" />
-        <Text style={[styles.cardTitle, { marginLeft: 6 }]}>CARDIO STRAIN & EXERTION</Text>
-      </View>
-
-      <View style={styles.metricRow}>
-        <View style={styles.metricBox}>
-          <Text style={styles.subText}>{data.strain ? 'Last Workout' : 'Target Strain'}</Text>
-          <Text style={styles.metricVal}>
-            {data.strain
-              ? (data.strain.lastWorkoutMin != null ? `${data.strain.lastWorkoutMin} min` : data.strain.lastWorkoutType)
-              : (isOptimal ? '12.5 - 14.0' : '5.0 - 7.5')}
-          </Text>
-        </View>
-        <View style={styles.dividerVertical} />
-        <View style={styles.metricBox}>
-          <Text style={styles.subText}>{data.strain ? 'Recent Load' : 'Current Strain'}</Text>
-          <Text style={[styles.metricVal, { color: isOptimal ? '#00A3E0' : '#DC2626' }]}>
-            {data.strain ? `${data.strain.load7dMin} min` : (isOptimal ? '8.2' : '14.1 (High)')}
-          </Text>
-        </View>
-      </View>
-
-      <Text style={styles.aiSummary}>
-        {data.strain
-          ? `Last workout: ${data.strain.lastWorkoutType}` +
-            (data.strain.lastAvgHr != null ? `, avg HR ${data.strain.lastAvgHr} bpm` : '') +
-            `. ${data.strain.load7dMin} min across ${data.strain.workouts} recent sessions` +
-            (data.strain.avgRpe != null ? `, average RPE ${data.strain.avgRpe}/10.` : '.')
-          : isOptimal
-          ? 'Your cardiovascular system is primed for moderate to high exertion workouts today.'
-          : 'Strain accumulator exceeded safe limits relative to suppressed autonomic recovery.'}
-      </Text>
-    </View>
-
-    {/* RECENT 7 ACTIVITIES BLOCK */}
-    <View style={styles.card}>
-      <View style={styles.cardHeaderRow}>
-        <Activity size={18} color="#00A3E0" />
-        <Text style={[styles.cardTitle, { marginLeft: 6 }]}>RECENT ACTIVITIES (LAST 7)</Text>
-      </View>
-
-      {data.recentActivities && data.recentActivities.length > 0 ? (
-        <View style={styles.activityList}>
-          {data.recentActivities.slice(0, 7).map((act, index) => (
-            <View key={act.sk || index} style={styles.activityRow}>
-              <View style={styles.activityMain}>
-                <Text style={styles.activityName}>{act.name}</Text>
-                <Text style={styles.activityDate}>{act.date}</Text>
-              </View>
-              <View style={styles.activityMetrics}>
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{act.calories != null ? `${act.calories} kcal` : '— kcal'}</Text>
-                </View>
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{act.avgHr != null ? `${act.avgHr} bpm` : '— bpm'}</Text>
-                </View>
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{act.distanceKm != null ? `${act.distanceKm} km` : '— km'}</Text>
-                </View>
-              </View>
-            </View>
-          ))}
-        </View>
-      ) : (
-        <Text style={styles.noActivityText}>No recent activities found for this user in database.</Text>
-      )}
-    </View>
-  </>
-)}
-
-      {/* 3. SLEEP VIEW */}
-      {activeCategory === 'Sleep' && (
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <Moon size={18} color="#8B5CF6" />
-            <Text style={[styles.cardTitle, { marginLeft: 6 }]}>SLEEP ANALYSIS</Text>
-          </View>
-
-          <View style={styles.metricRow}>
-            <View style={styles.metricBox}>
-              <Text style={styles.subText}>Last Night</Text>
-              <Text style={styles.metricVal}>
-                {data.sleep ? `${data.sleep.latestHours}h` : (isOptimal ? '7h 48m' : '5h 12m')}
-              </Text>
-            </View>
-            <View style={styles.dividerVertical} />
-            <View style={styles.metricBox}>
-              <Text style={styles.subText}>{data.sleep ? `Avg (${data.sleep.nights} nights)` : 'Deep / REM Ratio'}</Text>
-              <Text style={[styles.metricVal, { color: isOptimal ? '#8B5CF6' : '#DC2626' }]}>
-                {data.sleep ? `${data.sleep.avgHours}h` : (isOptimal ? '42%' : '18%')}
-              </Text>
-            </View>
-          </View>
-
-          <Text style={styles.aiSummary}>
-            {data.sleep
-              ? `Based on ${data.sleep.nights} recorded nights from your wearable. ` +
-                (data.sleep.avgHours >= 7
-                  ? 'Sleep volume supports full recovery adaptation.'
-                  : 'Sleep volume is below the 7h recovery threshold — prioritise an earlier night.')
-              : isOptimal
-              ? 'High restorative sleep efficiency recorded. REM cycles adequate for neuro-muscular recovery.'
-              : 'Elevated nocturnal wake frequency detected. Autonomic nervous system did not enter deep recovery state.'}
-          </Text>
-        </View>
-      )}
-
-      {/* 4. HEART VIEW */}
-      {activeCategory === 'Heart' && (
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <Heart size={18} color="#10B981" />
-            <Text style={[styles.cardTitle, { marginLeft: 6 }]}>CARDIOVASCULAR & HRV</Text>
-          </View>
-
-          <View style={styles.metricRow}>
-            <View style={styles.metricBox}>
-              <Text style={styles.subText}>Resting Heart Rate</Text>
-              <Text style={styles.metricVal}>
-                {data.heart ? `${data.heart.restingHr} bpm` : (isOptimal ? '52 bpm' : '64 bpm')}
-              </Text>
-            </View>
-            <View style={styles.dividerVertical} />
-            <View style={styles.metricBox}>
-              <Text style={styles.subText}>rMSSD (HRV)</Text>
-              <Text style={[styles.metricVal, { color: isOptimal ? '#10B981' : '#DC2626' }]}>
-                {data.heart?.hrvMs != null ? `${data.heart.hrvMs} ms` : (isOptimal ? '68 ms' : '28 ms')}
-              </Text>
-            </View>
-          </View>
-
-          <Text style={styles.aiSummary}>
-            {data.heart
-              ? `Latest wearable reading: ${data.heart.restingHr} bpm resting` +
-                (data.heart.deltaVsAvg != null
-                  ? `, ${data.heart.deltaVsAvg >= 0 ? '+' : ''}${data.heart.deltaVsAvg} bpm vs your recent average`
-                  : '') +
-                (data.heart.hrvMs != null ? `. HRV (rMSSD) at ${data.heart.hrvMs} ms.` : '.')
-              : isOptimal
-              ? 'Parasympathetic tone is dominant. Heart rate variability is well within optimal baseline thresholds.'
-              : 'Significant HRV depression observed (+12 bpm RHR elevation over 7-day baseline).'}
-          </Text>
-        </View>
-      )}
-    
-    {/* PROFILE VIEW */}
-{activeCategory === 'Profile' && (
-  <View style={styles.card}>
-    <View style={styles.cardHeaderRow}>
-      <User size={18} color="#6366F1" />
-      <Text style={[styles.cardTitle, { marginLeft: 6 }]}>MEMBER PROFILE & CLINICAL RECORD</Text>
-    </View>
-
-    <View style={styles.profileHeaderBox}>
-      <Text style={styles.profileName}>
-        {data.member?.firstName && data.member?.surname
-          ? `${data.member.firstName} ${data.member.surname}`
-          : `Member ${entityNumber}`}
-      </Text>
-      <Text style={styles.profileIdText}>Database Entity ID: {entityNumber}</Text>
-    </View>
-
-    <View style={styles.divider} />
-
-    <View style={styles.explainRow}>
-      <Text style={styles.explainLabel}>First Name:</Text>
-      <Text style={styles.explainVal}>{data.member?.firstName || '—'}</Text>
-    </View>
-
-    <View style={styles.explainRow}>
-      <Text style={styles.explainLabel}>Surname:</Text>
-      <Text style={styles.explainVal}>{data.member?.surname || '—'}</Text>
-    </View>
-
-    <View style={styles.explainRow}>
-      <Text style={styles.explainLabel}>Active Injury / Diagnosis:</Text>
-      <Text style={[styles.explainVal, { color: isOptimal ? '#10B981' : '#DC2626' }]}>
-        {data.member?.injury || 'None'}
-      </Text>
-    </View>
-
-    <View style={styles.explainRow}>
-      <Text style={styles.explainLabel}>Clinical Stage:</Text>
-      <Text style={styles.explainVal}>Stage {data.recovery_stage}</Text>
-    </View>
-
-    <View style={styles.explainRow}>
-      <Text style={styles.explainLabel}>Baseline VO₂ Max:</Text>
-      <Text style={styles.explainVal}>{data.vo2_max_baseline} mL/kg/min</Text>
-    </View>
-  </View>
-)}
-
-
-      {/* PRESCRIBED PLAN — the one-line summary for every tab except AI Plan,
-          which shows the full session instead and would otherwise say the
-          same thing twice. */}
-      {activeCategory !== 'AI Plan' && (
-        <View style={[styles.card, styles.highlightCard]}>
-          <Text style={styles.cardTitleLight}>TODAY'S AI PRESCRIBED PLAN</Text>
-          <Text style={styles.planTitle}>{data.duration_minutes} min {data.recommended_activity}</Text>
-          <Text style={styles.planSub}>Target Intensity: {data.intensity}</Text>
-          <Text style={styles.coachingMsg}>"{data.ai_coaching_message}"</Text>
-        </View>
-      )}
-
-      {/* ---------------- AI PLAN TAB ---------------- */}
-      {activeCategory === 'AI Plan' && (
-        <>
-          {/* Header row: the Generate control is deliberately small and sits
-              above the plan. Mount and focus never trigger it, so the LLM
-              quota can only be spent by a deliberate press. */}
-          <View style={styles.planHeaderRow}>
-            <View style={styles.planHeaderText}>
-              <Text style={styles.planHeaderTitle}>AI Session Plan</Text>
-              <Text style={styles.planHeaderSub}>
-                {data.planSource === 'gemini'
-                  ? 'Generated by Gemini · 1 request per press'
-                  : 'Not yet generated · 1 request per press'}
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              style={[styles.generateBtnSm, generating && styles.generateBtnBusy]}
-              onPress={onGeneratePlan}
-              disabled={generating}
-              activeOpacity={0.85}
-            >
-              {generating ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <>
-                  <Sparkles size={13} color="#FFFFFF" />
-                  <Text style={styles.generateBtnSmText}>
-                    {data.planSource === 'gemini' ? 'Regenerate' : 'Generate'}
+            <View>
+              <View style={styles.brandTitleRow}>
+                <Text style={styles.appTitle}>PulseGuard</Text>
+                
+                {/* LIVE vs MOCK BADGE INLINED */}
+                <View
+                  style={[
+                    styles.sourceBadge,
+                    {
+                      backgroundColor: data.dataSource === 'LIVE_API' ? '#DCFCE7' : '#FEF3C7',
+                      borderColor: data.dataSource === 'LIVE_API' ? '#16A34A' : '#D97706',
+                      marginLeft: 8,
+                    },
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.dot,
+                      { backgroundColor: data.dataSource === 'LIVE_API' ? '#16A34A' : '#D97706' },
+                    ]}
+                  />
+                  <Text
+                    style={[
+                      styles.sourceBadgeText,
+                      { color: data.dataSource === 'LIVE_API' ? '#15803D' : '#B45309' },
+                    ]}
+                  >
+                    {data.dataSource === 'LIVE_API' ? 'LIVE' : 'MOCK'}
                   </Text>
-                </>
-              )}
-            </TouchableOpacity>
+                </View>
+              </View>
+              <Text style={styles.subTitle}>Entity: {entityNumber} · Biometric Core</Text>
+            </View>
           </View>
 
-          {!!planError && <Text style={styles.planErrorText}>{planError}</Text>}
+          <TouchableOpacity 
+            style={styles.exitBtn} 
+            onPress={() => navigation.replace('Login')}
+          >
+            <LogOut size={16} color="#DC2626" />
+            <Text style={styles.exitBtnText}>Exit</Text>
+          </TouchableOpacity>
+        </View>
 
-          {data.exercisePlan ? (
-            <>
-              {/* SESSION — the hero of this tab */}
-              <View style={[styles.card, styles.sessionHero]}>
-                <View style={styles.sessionTopRow}>
-                  <View style={styles.sessionBadge}>
-                    <Sparkles size={11} color="#FDE68A" />
-                    <Text style={styles.sessionBadgeText}>
-                      {data.planSource === 'gemini' ? 'GEMINI DESIGNED' : 'MODEL DEFAULT'}
-                    </Text>
-                  </View>
-                  {!!data.planEnvelope && (
-                    <Text style={styles.readinessTag}>
-                      {titleCase(data.planEnvelope.readiness)}
-                    </Text>
-                  )}
+        {/* MAIN ACTION TOOLBAR (What-If AI & Check-In) */}
+        <View style={styles.actionToolbar}>
+          <TouchableOpacity 
+            style={styles.toolbarBtnPrimary} 
+            onPress={() => navigation.navigate('Simulator', { entityNumber })}
+          >
+            <Sparkles size={16} color="#FFF" />
+            <Text style={styles.toolbarBtnPrimaryText}>What-If AI Simulator</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.toolbarBtnSecondary} 
+            onPress={() => setCheckInVisible(true)}
+          >
+            <ClipboardCheck size={16} color="#002B49" />
+            <Text style={styles.toolbarBtnSecondaryText}>Daily Check-In</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* MOCK WEARABLE SYNC BANNER */}
+        <View style={styles.syncBanner}>
+          <View style={styles.syncDot} />
+          <Text style={styles.syncText}>
+            {data.lastReadingDate
+              ? `Wearable data · last reading ${data.lastReadingDate}`
+              : 'Garmin Forerunner 955 · Synced 2m ago'}
+          </Text>
+        </View>
+
+        {/* INTERACTIVE VITALITY CATEGORY BUBBLES */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.bubbleContainer}>
+          {categories.map((cat) => {
+            const isActive = activeCategory === cat.id;
+            const CategoryIcon = cat.Icon;
+            return (
+              <TouchableOpacity 
+                key={cat.id} 
+                style={styles.bubbleItem}
+                onPress={() => setActiveCategory(cat.id as CategoryType)}
+                activeOpacity={0.7}
+              >
+                <View 
+                  style={[
+                    styles.bubbleCircle, 
+                    isActive ? { backgroundColor: cat.color, borderColor: cat.color } : { backgroundColor: '#FFF', borderColor: '#E2E8F0' }
+                  ]}
+                >
+                  <CategoryIcon size={20} color={isActive ? '#FFF' : cat.color} />
                 </View>
+                <Text style={[styles.bubbleLabel, isActive && { color: '#002B49', fontWeight: '800' }]}>
+                  {cat.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
 
-                {!!data.exercisePlan.session_focus && (
-                  <Text style={styles.sessionFocus}>{data.exercisePlan.session_focus}</Text>
-                )}
+        {/* HEADER */}
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.headerTitle}>PulseGuard AI</Text>
+            <Text style={styles.headerSub}>Active Focus: <Text style={{ color: '#E11082', fontWeight: '800' }}>{activeCategory}</Text></Text>
+          </View>
+          
+          <View style={styles.headerActions}>
+            <View style={[styles.statusChip, { backgroundColor: isOptimal ? '#DCFCE7' : '#FEE2E2' }]}>
+              {isOptimal ? <ShieldCheck size={14} color="#16A34A" /> : <AlertTriangle size={14} color="#DC2626" />}
+              <Text style={[styles.statusChipText, { color: isOptimal ? '#16A34A' : '#DC2626' }]}>
+                {data.recovery_trend}
+              </Text>
+            </View>
+          </View>
+        </View>
 
-                <View style={styles.sessionStatRow}>
-                  <View>
-                    <Text style={styles.sessionBigNum}>{data.exercisePlan.total_minutes}</Text>
-                    <Text style={styles.sessionStatLabel}>MINUTES</Text>
-                  </View>
-                  <View style={styles.sessionStatDivider} />
-                  <View>
-                    <Text style={styles.sessionMedNum}>{data.exercisePlan.blocks.length}</Text>
-                    <Text style={styles.sessionStatLabel}>PHASES</Text>
-                  </View>
-                  <View style={styles.sessionStatDivider} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.sessionMedNum}>{titleCase(data.intensity)}</Text>
-                    <Text style={styles.sessionStatLabel}>PEAK INTENSITY</Text>
-                  </View>
+        {/* DYNAMIC CATEGORY CONTENT */}
+
+        {/* 1. RECOVERY VIEW */}
+        {activeCategory === 'Recovery' && (
+          <>
+            <View style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <View style={[styles.statusChip, { backgroundColor: isOptimal ? '#E11082' : '#DC2626', marginBottom: 8 }]}>
+                  <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '800' }}>
+                    {isOptimal ? 'OPTIMAL RECOVERY' : 'SETBACK RISK ALERT'}
+                  </Text>
                 </View>
+              </View>
 
-                <View style={styles.sessionBox}>
-                  {data.exercisePlan.blocks.map((block, index) => (
-                    <View key={index} style={styles.blockRow}>
-                      <View style={styles.blockRail}>
-                        <View style={styles.blockDot} />
-                        {index < data.exercisePlan!.blocks.length - 1 && (
-                          <View style={styles.blockLine} />
-                        )}
+              <VitalityScoreRing score={data.recovery_score} isOptimal={isOptimal} />
+              <Text style={styles.aiSummary}>{data.ai_summary}</Text>
+            </View>
+
+            <View style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <Activity size={16} color="#002B49" />
+                <Text style={[styles.cardTitle, { marginLeft: 6 }]}>7-DAY RECOVERY TREND</Text>
+              </View>
+
+              <TrendChart isOptimal={isOptimal} />
+              <View style={styles.divider} />
+
+              <View style={styles.metricRow}>
+                <View style={styles.metricBox}>
+                  <Text style={styles.subText}>Baseline VO₂ Max</Text>
+                  <Text style={styles.metricVal}>{data.vo2_max_baseline}</Text>
+                </View>
+                <View style={styles.dividerVertical} />
+                <View style={styles.metricBox}>
+                  <Text style={styles.subText}>Current Estimated</Text>
+                  <Text style={[styles.metricVal, { color: isOptimal ? '#002B49' : '#E11082' }]}>
+                    {data.vo2_max_current}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </>
+        )}
+
+        {/* 2. STRAIN VIEW */}
+        {activeCategory === 'Strain' && (
+          <>
+            <View style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <Zap size={18} color="#00A3E0" />
+                <Text style={[styles.cardTitle, { marginLeft: 6 }]}>CARDIO STRAIN & EXERTION</Text>
+              </View>
+
+              <View style={styles.metricRow}>
+                <View style={styles.metricBox}>
+                  <Text style={styles.subText}>{data.strain ? 'Last Workout' : 'Target Strain'}</Text>
+                  <Text style={styles.metricVal}>
+                    {data.strain
+                      ? (data.strain.lastWorkoutMin != null ? `${data.strain.lastWorkoutMin} min` : data.strain.lastWorkoutType)
+                      : (isOptimal ? '12.5 - 14.0' : '5.0 - 7.5')}
+                  </Text>
+                </View>
+                <View style={styles.dividerVertical} />
+                <View style={styles.metricBox}>
+                  <Text style={styles.subText}>{data.strain ? 'Recent Load' : 'Current Strain'}</Text>
+                  <Text style={[styles.metricVal, { color: isOptimal ? '#00A3E0' : '#DC2626' }]}>
+                    {data.strain ? `${data.strain.load7dMin} min` : (isOptimal ? '8.2' : '14.1 (High)')}
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.aiSummary}>
+                {data.strain
+                  ? `Last workout: ${data.strain.lastWorkoutType}` +
+                    (data.strain.lastAvgHr != null ? `, avg HR ${data.strain.lastAvgHr} bpm` : '') +
+                    `. ${data.strain.load7dMin} min across ${data.strain.workouts} recent sessions` +
+                    (data.strain.avgRpe != null ? `, average RPE ${data.strain.avgRpe}/10.` : '.')
+                  : isOptimal
+                  ? 'Your cardiovascular system is primed for moderate to high exertion workouts today.'
+                  : 'Strain accumulator exceeded safe limits relative to suppressed autonomic recovery.'}
+              </Text>
+            </View>
+
+            {/* RECENT 7 ACTIVITIES BLOCK */}
+            <View style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <Activity size={18} color="#00A3E0" />
+                <Text style={[styles.cardTitle, { marginLeft: 6 }]}>RECENT ACTIVITIES (LAST 7)</Text>
+              </View>
+
+              {data.recentActivities && data.recentActivities.length > 0 ? (
+                <View style={styles.activityList}>
+                  {data.recentActivities.slice(0, 7).map((act, index) => (
+                    <View key={act.sk || index} style={styles.activityRow}>
+                      <View style={styles.activityMain}>
+                        <Text style={styles.activityName}>{act.name}</Text>
+                        <Text style={styles.activityDate}>{act.date}</Text>
                       </View>
-                      <View style={styles.blockBody}>
-                        <Text style={styles.blockPhase}>{block.phase.toUpperCase()}</Text>
-                        <Text style={styles.blockTitle}>
-                          {block.minutes} min {titleCase(block.activity)}
-                        </Text>
-                        <View style={styles.chipRow}>
-                          <Text style={styles.chip}>{titleCase(block.intensity)}</Text>
-                          {!!block.target_rpe && (
-                            <Text style={styles.chip}>RPE {block.target_rpe}</Text>
-                          )}
+                      <View style={styles.activityMetrics}>
+                        <View style={styles.badge}>
+                          <Text style={styles.badgeText}>{act.calories != null ? `${act.calories} kcal` : '— kcal'}</Text>
                         </View>
-                        {!!block.cue && <Text style={styles.blockCue}>{block.cue}</Text>}
+                        <View style={styles.badge}>
+                          <Text style={styles.badgeText}>{act.avgHr != null ? `${act.avgHr} bpm` : '— bpm'}</Text>
+                        </View>
+                        <View style={styles.badge}>
+                          <Text style={styles.badgeText}>{act.distanceKm != null ? `${act.distanceKm} km` : '— km'}</Text>
+                        </View>
                       </View>
                     </View>
                   ))}
                 </View>
+              ) : (
+                <Text style={styles.noActivityText}>No recent activities found for this user in database.</Text>
+              )}
+            </View>
+          </>
+        )}
 
-                {!!data.exercisePlan.stop_rules?.length && (
-                  <View style={styles.stopBox}>
-                    <Text style={styles.stopTitle}>STOP IMMEDIATELY IF</Text>
-                    {data.exercisePlan.stop_rules.map((rule, index) => (
-                      <Text key={index} style={styles.stopRule}>• {rule}</Text>
-                    ))}
-                  </View>
-                )}
+        {/* 3. SLEEP VIEW */}
+        {activeCategory === 'Sleep' && (
+          <View style={styles.card}>
+            <View style={styles.cardHeaderRow}>
+              <Moon size={18} color="#8B5CF6" />
+              <Text style={[styles.cardTitle, { marginLeft: 6 }]}>SLEEP ANALYSIS</Text>
+            </View>
 
-                {!!data.exercisePlan.progression_note && (
-                  <Text style={styles.progressionNote}>{data.exercisePlan.progression_note}</Text>
-                )}
+            <View style={styles.metricRow}>
+              <View style={styles.metricBox}>
+                <Text style={styles.subText}>Last Night</Text>
+                <Text style={styles.metricVal}>
+                  {data.sleep ? `${data.sleep.latestHours}h` : (isOptimal ? '7h 48m' : '5h 12m')}
+                </Text>
               </View>
-
-              {/* SAFETY ENVELOPE — the differentiator worth showing a judge:
-                  the AI designed inside limits the model set, not around them. */}
-              {!!data.planEnvelope && (
-                <View style={styles.card}>
-                  <View style={styles.cardHeaderRow}>
-                    <ShieldCheck size={16} color="#10B981" />
-                    <Text style={[styles.cardTitle, { marginLeft: 6 }]}>MODEL SAFETY ENVELOPE</Text>
-                  </View>
-                  <Text style={styles.envelopeIntro}>
-                    Limits set by the readiness model before the AI was asked. Any plan outside
-                    them is rejected automatically.
-                  </Text>
-
-                  <View style={styles.envRow}>
-                    <Text style={styles.envLabel}>Max duration</Text>
-                    <Text style={styles.envVal}>{data.planEnvelope.max_total_minutes} min</Text>
-                  </View>
-                  <View style={styles.envRow}>
-                    <Text style={styles.envLabel}>Max intensity</Text>
-                    <Text style={styles.envVal}>{titleCase(data.planEnvelope.max_intensity)}</Text>
-                  </View>
-                  <View style={styles.envRow}>
-                    <Text style={styles.envLabel}>Max exertion</Text>
-                    <Text style={styles.envVal}>RPE {data.planEnvelope.max_rpe}</Text>
-                  </View>
-                  <View style={styles.envRow}>
-                    <Text style={styles.envLabel}>Permitted</Text>
-                    <Text style={styles.envVal}>
-                      {data.planEnvelope.allowed_activities.map(titleCase).join(', ') || 'Rest only'}
-                    </Text>
-                  </View>
-                  {!!data.planEnvelope.anchor?.last_completed_activity && (
-                    <View style={styles.envRow}>
-                      <Text style={styles.envLabel}>Anchored to</Text>
-                      <Text style={styles.envVal}>
-                        {data.planEnvelope.anchor.last_completed_minutes} min{' '}
-                        {titleCase(data.planEnvelope.anchor.last_completed_activity)}
-                      </Text>
-                    </View>
-                  )}
-
-                  <Text style={styles.planSourceNote}>
-                    {data.planSource === 'gemini'
-                      ? '✓ This session passed every check above'
-                      : data.planSource === 'rules'
-                        ? '⚠ The AI plan failed a check — showing the deterministic plan'
-                        : 'Deterministic plan — tap Generate for an AI-designed session'}
-                  </Text>
-                </View>
-              )}
-
-              {/* PROVISIONAL WEEK */}
-              {!!data.weekPlan?.length && (
-                <View style={styles.card}>
-                  <Text style={styles.cardTitle}>THIS WEEK (PROVISIONAL)</Text>
-                  <Text style={styles.weekNote}>
-                    Day 1 follows today’s model prediction. Days 2–7 are a provisional shape,
-                    not a forecast, and are rebuilt each time the plan is regenerated.
-                  </Text>
-                  {data.weekPlan.map((day) => {
-                    const resting = day.activity === 'rest' || day.durationMinutes === 0;
-                    return (
-                      <View key={day.day} style={styles.weekRow}>
-                        <Text style={styles.weekDay}>Day {day.day}</Text>
-                        <View style={styles.weekBody}>
-                          <Text style={[styles.weekActivity, resting && styles.weekResting]}>
-                            {resting ? 'Rest' : `${day.durationMinutes} min ${titleCase(day.activity)}`}
-                          </Text>
-                          {!!day.focus && !resting && (
-                            <Text style={styles.weekFocus}>{day.focus}</Text>
-                          )}
-                        </View>
-                        <Text style={styles.weekIntensity}>
-                          {resting ? '—' : titleCase(day.intensity)}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </View>
-              )}
-            </>
-          ) : (
-            <View style={styles.card}>
-              <Text style={styles.emptyPlanTitle}>No session plan stored yet</Text>
-              <Text style={styles.emptyPlanText}>
-                This member’s last prediction was saved before session plans existed. Press
-                Generate above for a Gemini-designed session, or submit a check-in — that
-                rebuilds the deterministic plan for free.
-              </Text>
+              <View style={styles.dividerVertical} />
+              <View style={styles.metricBox}>
+                <Text style={styles.subText}>{data.sleep ? `Avg (${data.sleep.nights} nights)` : 'Deep / REM Ratio'}</Text>
+                <Text style={[styles.metricVal, { color: isOptimal ? '#8B5CF6' : '#DC2626' }]}>
+                  {data.sleep ? `${data.sleep.avgHours}h` : (isOptimal ? '42%' : '18%')}
+                </Text>
+              </View>
             </View>
-          )}
-        </>
-      )}
 
-      {/* AI EXPLAINABILITY CARD */}
-      <View style={styles.explainCard}>
-        <TouchableOpacity 
-          style={styles.explainHeader} 
-          onPress={() => setShowExplainability(!showExplainability)}>
-          <View style={styles.cardHeaderRow}>
-            <Sparkles size={18} color="#E11082" />
-            <Text style={styles.explainTitle}>Why This Plan? (AI Explainability)</Text>
+            <Text style={styles.aiSummary}>
+              {data.sleep
+                ? `Based on ${data.sleep.nights} recorded nights from your wearable. ` +
+                  (data.sleep.avgHours >= 7
+                    ? 'Sleep volume supports full recovery adaptation.'
+                    : 'Sleep volume is below the 7h recovery threshold — prioritise an earlier night.')
+                : isOptimal
+                ? 'High restorative sleep efficiency recorded. REM cycles adequate for neuro-muscular recovery.'
+                : 'Elevated nocturnal wake frequency detected. Autonomic nervous system did not enter deep recovery state.'}
+            </Text>
           </View>
-          {showExplainability ? <ChevronUp size={18} color="#64748B" /> : <ChevronDown size={18} color="#64748B" />}
-        </TouchableOpacity>
+        )}
 
-        {showExplainability && (
-          <View style={styles.explainBody}>
-            <View style={styles.explainRow}>
-              <Text style={styles.explainLabel}>Primary Driver:</Text>
-              <Text style={styles.explainVal}>{data.explainability.primary_factor}</Text>
+        {/* 4. HEART VIEW */}
+        {activeCategory === 'Heart' && (
+          <View style={styles.card}>
+            <View style={styles.cardHeaderRow}>
+              <Heart size={18} color="#10B981" />
+              <Text style={[styles.cardTitle, { marginLeft: 6 }]}>CARDIOVASCULAR & HRV</Text>
             </View>
-            <View style={styles.explainRow}>
-              <Text style={styles.explainLabel}>Resting HR Shift:</Text>
-              <Text style={styles.explainVal}>{data.explainability.resting_hr_delta}</Text>
+
+            <View style={styles.metricRow}>
+              <View style={styles.metricBox}>
+                <Text style={styles.subText}>Resting Heart Rate</Text>
+                <Text style={styles.metricVal}>
+                  {data.heart ? `${data.heart.restingHr} bpm` : (isOptimal ? '52 bpm' : '64 bpm')}
+                </Text>
+              </View>
+              <View style={styles.dividerVertical} />
+              <View style={styles.metricBox}>
+                <Text style={styles.subText}>rMSSD (HRV)</Text>
+                <Text style={[styles.metricVal, { color: isOptimal ? '#10B981' : '#DC2626' }]}>
+                  {data.heart?.hrvMs != null ? `${data.heart.hrvMs} ms` : (isOptimal ? '68 ms' : '28 ms')}
+                </Text>
+              </View>
             </View>
-            <View style={styles.explainRow}>
-              <Text style={styles.explainLabel}>7-Day Strain:</Text>
-              <Text style={styles.explainVal}>{data.explainability.training_load_7d}</Text>
+
+            <Text style={styles.aiSummary}>
+              {data.heart
+                ? `Latest wearable reading: ${data.heart.restingHr} bpm resting` +
+                  (data.heart.deltaVsAvg != null
+                    ? `, ${data.heart.deltaVsAvg >= 0 ? '+' : ''}${data.heart.deltaVsAvg} bpm vs your recent average`
+                    : '') +
+                  (data.heart.hrvMs != null ? `. HRV (rMSSD) at ${data.heart.hrvMs} ms.` : '.')
+                : isOptimal
+                ? 'Parasympathetic tone is dominant. Heart rate variability is well within optimal baseline thresholds.'
+                : 'Significant HRV depression observed (+12 bpm RHR elevation over 7-day baseline).'}
+            </Text>
+          </View>
+        )}
+      
+        {/* PROFILE VIEW */}
+        {activeCategory === 'Profile' && (
+          <View style={styles.card}>
+            <View style={styles.cardHeaderRow}>
+              <User size={18} color="#6366F1" />
+              <Text style={[styles.cardTitle, { marginLeft: 6 }]}>MEMBER PROFILE & CLINICAL RECORD</Text>
             </View>
-            {/* Bedrock is denied by an org SCP on this account and is not used
-                anywhere in the stack. The prose is written by Gemini, or by a
-                canned fallback when generation fails — label it honestly. */}
-            <View style={styles.bedrockBox}>
-              <Text style={styles.bedrockTitle}>
-                {data.coachSource === 'gemini'
-                  ? 'Gemini AI Rationale'
-                  : data.coachSource === 'not_requested'
-                    ? 'Standard Guidance (Tap Generate AI Plan)'
-                    : 'Standard Guidance (AI Unavailable)'}
+
+            <View style={styles.profileHeaderBox}>
+              <Text style={styles.profileName}>
+                {data.member?.firstName && data.member?.surname
+                  ? `${data.member.firstName} ${data.member.surname}`
+                  : `Member ${entityNumber}`}
               </Text>
-              <Text style={styles.bedrockText}>{data.explainability.bedrock_rationale}</Text>
+              <Text style={styles.profileIdText}>Database Entity ID: {entityNumber}</Text>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.explainRow}>
+              <Text style={styles.explainLabel}>First Name:</Text>
+              <Text style={styles.explainVal}>{data.member?.firstName || '—'}</Text>
+            </View>
+
+            <View style={styles.explainRow}>
+              <Text style={styles.explainLabel}>Surname:</Text>
+              <Text style={styles.explainVal}>{data.member?.surname || '—'}</Text>
+            </View>
+
+            <View style={styles.explainRow}>
+              <Text style={styles.explainLabel}>Active Injury / Diagnosis:</Text>
+              <Text style={[styles.explainVal, { color: isOptimal ? '#10B981' : '#DC2626' }]}>
+                {data.member?.injury || 'None'}
+              </Text>
+            </View>
+
+            <View style={styles.explainRow}>
+              <Text style={styles.explainLabel}>Clinical Stage:</Text>
+              <Text style={styles.explainVal}>Stage {data.recovery_stage}</Text>
+            </View>
+
+            <View style={styles.explainRow}>
+              <Text style={styles.explainLabel}>Baseline VO₂ Max:</Text>
+              <Text style={styles.explainVal}>{data.vo2_max_baseline} mL/kg/min</Text>
             </View>
           </View>
         )}
-      </View>
+
+        {/* 6. DEDICATED AI PLAN VIEW */}
+        {activeCategory === 'AI Plan' && (
+          <>
+            {/* Header row: the Generate control is deliberately small and sits
+                above the plan. Mount and focus never trigger it, so the LLM
+                quota can only be spent by a deliberate press. */}
+            <View style={styles.planHeaderRow}>
+              <View style={styles.planHeaderText}>
+                <Text style={styles.planHeaderTitle}>AI Session Plan</Text>
+                <Text style={styles.planHeaderSub}>
+                  {data.planSource === 'gemini'
+                    ? 'Generated by Gemini · 1 request per press'
+                    : 'Not yet generated · 1 request per press'}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.generateBtnSm, generating && styles.generateBtnBusy]}
+                onPress={onGeneratePlan}
+                disabled={generating}
+                activeOpacity={0.85}
+              >
+                {generating ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Sparkles size={13} color="#FFFFFF" />
+                    <Text style={styles.generateBtnSmText}>
+                      {data.planSource === 'gemini' ? 'Regenerate' : 'Generate'}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {!!planError && <Text style={styles.planErrorText}>{planError}</Text>}
+
+            {data.exercisePlan ? (
+              <>
+                {/* SESSION — the hero of this tab */}
+                <View style={[styles.card, styles.sessionHero]}>
+                  <View style={styles.sessionTopRow}>
+                    <View style={styles.sessionBadge}>
+                      <Sparkles size={11} color="#FDE68A" />
+                      <Text style={styles.sessionBadgeText}>
+                        {data.planSource === 'gemini' ? 'GEMINI DESIGNED' : 'MODEL DEFAULT'}
+                      </Text>
+                    </View>
+                    {!!data.planEnvelope && (
+                      <Text style={styles.readinessTag}>
+                        {titleCase(data.planEnvelope.readiness)}
+                      </Text>
+                    )}
+                  </View>
+
+                  {!!data.exercisePlan.session_focus && (
+                    <Text style={styles.sessionFocus}>{data.exercisePlan.session_focus}</Text>
+                  )}
+
+                  <View style={styles.sessionStatRow}>
+                    <View>
+                      <Text style={styles.sessionBigNum}>{data.exercisePlan.total_minutes}</Text>
+                      <Text style={styles.sessionStatLabel}>MINUTES</Text>
+                    </View>
+                    <View style={styles.sessionStatDivider} />
+                    <View>
+                      <Text style={styles.sessionMedNum}>{data.exercisePlan.blocks.length}</Text>
+                      <Text style={styles.sessionStatLabel}>PHASES</Text>
+                    </View>
+                    <View style={styles.sessionStatDivider} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.sessionMedNum}>{titleCase(data.intensity)}</Text>
+                      <Text style={styles.sessionStatLabel}>PEAK INTENSITY</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.sessionBox}>
+                    {data.exercisePlan.blocks.map((block, index) => (
+                      <View key={index} style={styles.blockRow}>
+                        <View style={styles.blockRail}>
+                          <View style={styles.blockDot} />
+                          {index < data.exercisePlan!.blocks.length - 1 && (
+                            <View style={styles.blockLine} />
+                          )}
+                        </View>
+                        <View style={styles.blockBody}>
+                          <Text style={styles.blockPhase}>{block.phase.toUpperCase()}</Text>
+                          <Text style={styles.blockTitle}>
+                            {block.minutes} min {titleCase(block.activity)}
+                          </Text>
+                          <View style={styles.chipRow}>
+                            <Text style={styles.chip}>{titleCase(block.intensity)}</Text>
+                            {!!block.target_rpe && (
+                              <Text style={styles.chip}>RPE {block.target_rpe}</Text>
+                            )}
+                          </View>
+                          {!!block.cue && <Text style={styles.blockCue}>{block.cue}</Text>}
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+
+                  {!!data.exercisePlan.stop_rules?.length && (
+                    <View style={styles.stopBox}>
+                      <Text style={styles.stopTitle}>STOP IMMEDIATELY IF</Text>
+                      {data.exercisePlan.stop_rules.map((rule, index) => (
+                        <Text key={index} style={styles.stopRule}>• {rule}</Text>
+                      ))}
+                    </View>
+                  )}
+
+                  {!!data.exercisePlan.progression_note && (
+                    <Text style={styles.progressionNote}>{data.exercisePlan.progression_note}</Text>
+                  )}
+                </View>
+
+                {/* SAFETY ENVELOPE — the AI designed inside limits the model
+                    set, not around them. */}
+                {!!data.planEnvelope && (
+                  <View style={styles.card}>
+                    <View style={styles.cardHeaderRow}>
+                      <ShieldCheck size={16} color="#10B981" />
+                      <Text style={[styles.cardTitle, { marginLeft: 6 }]}>MODEL SAFETY ENVELOPE</Text>
+                    </View>
+                    <Text style={styles.envelopeIntro}>
+                      Limits set by the readiness model before the AI was asked. Any plan outside
+                      them is rejected automatically.
+                    </Text>
+
+                    <View style={styles.envRow}>
+                      <Text style={styles.envLabel}>Max duration</Text>
+                      <Text style={styles.envVal}>{data.planEnvelope.max_total_minutes} min</Text>
+                    </View>
+                    <View style={styles.envRow}>
+                      <Text style={styles.envLabel}>Max intensity</Text>
+                      <Text style={styles.envVal}>{titleCase(data.planEnvelope.max_intensity)}</Text>
+                    </View>
+                    <View style={styles.envRow}>
+                      <Text style={styles.envLabel}>Max exertion</Text>
+                      <Text style={styles.envVal}>RPE {data.planEnvelope.max_rpe}</Text>
+                    </View>
+                    <View style={styles.envRow}>
+                      <Text style={styles.envLabel}>Permitted</Text>
+                      <Text style={styles.envVal}>
+                        {data.planEnvelope.allowed_activities.map(titleCase).join(', ') || 'Rest only'}
+                      </Text>
+                    </View>
+                    {!!data.planEnvelope.anchor?.last_completed_activity && (
+                      <View style={styles.envRow}>
+                        <Text style={styles.envLabel}>Anchored to</Text>
+                        <Text style={styles.envVal}>
+                          {data.planEnvelope.anchor.last_completed_minutes} min{' '}
+                          {titleCase(data.planEnvelope.anchor.last_completed_activity)}
+                        </Text>
+                      </View>
+                    )}
+
+                    <Text style={styles.planSourceNote}>
+                      {data.planSource === 'gemini'
+                        ? '✓ This session passed every check above'
+                        : data.planSource === 'rules'
+                          ? '⚠ The AI plan failed a check — showing the deterministic plan'
+                          : 'Deterministic plan — tap Generate for an AI-designed session'}
+                    </Text>
+                  </View>
+                )}
+
+                {/* PROVISIONAL WEEK */}
+                {!!data.weekPlan?.length && (
+                  <View style={styles.card}>
+                    <Text style={styles.cardTitle}>THIS WEEK (PROVISIONAL)</Text>
+                    <Text style={styles.weekNote}>
+                      Day 1 follows today's model prediction. Days 2–7 are a provisional shape,
+                      not a forecast, and are rebuilt each time the plan is regenerated.
+                    </Text>
+                    {data.weekPlan.map((day) => {
+                      const resting = day.activity === 'rest' || day.durationMinutes === 0;
+                      return (
+                        <View key={day.day} style={styles.weekRow}>
+                          <Text style={styles.weekDay}>Day {day.day}</Text>
+                          <View style={styles.weekBody}>
+                            <Text style={[styles.weekActivity, resting && styles.weekResting]}>
+                              {resting
+                                ? 'Rest'
+                                : `${day.durationMinutes} min ${titleCase(day.activity)}`}
+                            </Text>
+                            {!!day.focus && !resting && (
+                              <Text style={styles.weekFocus}>{day.focus}</Text>
+                            )}
+                          </View>
+                          <Text style={styles.weekIntensity}>
+                            {resting ? '—' : titleCase(day.intensity)}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </>
+            ) : (
+              <View style={[styles.card, styles.highlightCard]}>
+                <View style={styles.cardHeaderRow}>
+                  <Sparkles size={18} color="#E11082" />
+                  <Text style={[styles.cardTitleLight, { marginLeft: 6 }]}>TODAY'S AI PRESCRIBED PLAN</Text>
+                </View>
+                <Text style={styles.planTitle}>{data.duration_minutes} min {data.recommended_activity}</Text>
+                <Text style={styles.planSub}>Target Intensity: {data.intensity}</Text>
+                <Text style={styles.coachingMsg}>"{data.ai_coaching_message}"</Text>
+              </View>
+            )}
+
+            <View style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <Sparkles size={16} color="#002B49" />
+                <Text style={[styles.cardTitle, { marginLeft: 6 }]}>AI RATIONALE & INSIGHTS</Text>
+              </View>
+              <Text style={styles.aiSummary}>{data.ai_summary}</Text>
+            </View>
+          </>
+        )}
+
+      </ScrollView>
+
+      {/* PERSISTENT RIGHT-SIDE SLIDER TAB HANDLE */}
+      <TouchableOpacity
+        style={styles.sideTabHandle}
+        onPress={() => setLogDrawerVisible(true)}
+        activeOpacity={0.8}
+      >
+        <Plus size={18} color="#FFF" />
+        <Text style={styles.sideTabHandleText}>LOG</Text>
+      </TouchableOpacity>
+
+      {/* SLIDING EXERCISE DRAWER */}
+      <LogExerciseDrawer
+        visible={logDrawerVisible}
+        onClose={() => setLogDrawerVisible(false)}
+        onSubmit={handleLogExerciseSubmit}
+      />
 
       {/* DAILY CHECK-IN MODAL */}
       <DailyCheckInModal
         visible={checkInVisible}
         onClose={() => setCheckInVisible(false)}
-        onSubmitCheckIn={(hasSymptoms, details) => {
-          // Persist the check-in to DynamoDB (fire-and-forget; never blocks the demo)
-          submitCheckIn(entityNumber, details);
-          // Local plan shift until the real ML pipeline returns per-check-in predictions;
-          // keep the member's live VO2 values from the API
+        onSubmitCheckIn={async (hasSymptoms, details) => {
+          // The backend re-runs both models on every check-in and returns the
+          // fresh prediction, so render that. Previously this discarded the
+          // response and swapped in a hardcoded OPTIMAL_STATE/WARNING_STATE,
+          // which meant a live check-in displayed mock numbers.
+          const result = await submitCheckIn(entityNumber, details, data);
+          if (result.data) {
+            setData(result.data);
+            return;
+          }
+          // Unreachable backend: keep the member's real values rather than
+          // inventing a new state, and let the next focus refetch correct it.
           setData((prev) => ({
-            ...(hasSymptoms ? WARNING_STATE : OPTIMAL_STATE),
-            vo2_max_baseline: prev.vo2_max_baseline,
-            vo2_max_current: prev.vo2_max_current,
+            ...prev,
+            dataSource: 'MOCK_FALLBACK',
           }));
         }}
       />
-
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F4F7F9' }, // Soft, clean off-white background
+  container: { flex: 1, backgroundColor: '#F4F7F9' },
   contentContainer: { padding: 16, maxWidth: 430, width: '100%', alignSelf: 'center', paddingBottom: 40 },
-  
   
   syncBanner: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', backgroundColor: '#E0F2FE', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, marginBottom: 16, borderWidth: 1, borderColor: '#BAE6FD' },
   syncDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#0284C7', marginRight: 6 },
@@ -784,7 +747,6 @@ const styles = StyleSheet.create({
   statusChip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 12 },
   statusChipText: { fontSize: 11, fontWeight: '800', marginLeft: 4 },
   
-  // Clean Premium Cards
   card: { 
     backgroundColor: '#FFFFFF', 
     borderRadius: 20, 
@@ -806,6 +768,11 @@ const styles = StyleSheet.create({
   metricBox: { flex: 1, alignItems: 'center' },
   subText: { fontSize: 12, color: '#64748B', fontWeight: '600' },
   metricVal: { fontSize: 24, fontWeight: '900', color: '#002B49', marginTop: 4 },
+  forecastBox: { marginTop: 16, padding: 14, borderRadius: 14, backgroundColor: '#F0F9FF', borderWidth: 1, borderColor: '#BAE6FD', alignItems: 'center' },
+  forecastLabel: { fontSize: 11, fontWeight: '900', color: '#0369A1', letterSpacing: 0.8 },
+  forecastValue: { fontSize: 24, fontWeight: '900', color: '#002B49', marginTop: 5 },
+  forecastChange: { fontSize: 13, fontWeight: '800', marginTop: 4 },
+  forecastDisclaimer: { fontSize: 11, color: '#64748B', marginTop: 6, fontStyle: 'italic' },
   
   highlightCard: { backgroundColor: '#002B49', borderColor: '#001A2C' },
   planTitle: { fontSize: 22, fontWeight: '900', color: '#FFFFFF', marginTop: 8, letterSpacing: -0.5 },
@@ -828,8 +795,6 @@ const styles = StyleSheet.create({
   generateBtnBusy: { backgroundColor: '#FBBF24' },
   generateBtnSmText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800', marginLeft: 6 },
   planErrorText: { fontSize: 12, color: '#DC2626', marginBottom: 12, fontWeight: '600' },
-  emptyPlanTitle: { fontSize: 15, fontWeight: '800', color: '#002B49' },
-  emptyPlanText: { fontSize: 13, color: '#64748B', lineHeight: 20, marginTop: 6 },
 
   // --- session hero ---
   sessionHero: { backgroundColor: '#0B1F35', borderColor: '#0B1F35' },
@@ -841,7 +806,6 @@ const styles = StyleSheet.create({
   sessionBadgeText: { fontSize: 9, fontWeight: '900', color: '#FDE68A', letterSpacing: 0.8, marginLeft: 5 },
   readinessTag: { fontSize: 10, fontWeight: '900', color: '#38BDF8', letterSpacing: 1 },
   sessionFocus: { fontSize: 21, fontWeight: '900', color: '#FFFFFF', marginTop: 12, letterSpacing: -0.5, lineHeight: 27 },
-
   sessionStatRow: { flexDirection: 'row', alignItems: 'center', marginTop: 16 },
   sessionBigNum: { fontSize: 34, fontWeight: '900', color: '#F59E0B', letterSpacing: -1 },
   sessionMedNum: { fontSize: 20, fontWeight: '900', color: '#F1F5F9', marginTop: 10 },
@@ -904,71 +868,97 @@ const styles = StyleSheet.create({
     })
   },
 
-  profileHeaderBox: {
-  marginTop: 12,
-  padding: 12,
-  backgroundColor: '#F8FAFC',
-  borderRadius: 12,
-  borderWidth: 1,
-  borderColor: '#E2E8F0',
-},
-profileName: {
-  fontSize: 18,
-  fontWeight: '900',
-  color: '#002B49',
-},
-profileIdText: {
-  fontSize: 12,
-  fontWeight: '600',
-  color: '#64748B',
-  marginTop: 2,
-},
+  sideTabHandle: {
+    position: 'absolute',
+    right: 0,
+    top: '40%',
+    backgroundColor: '#E11082',
+    borderTopLeftRadius: 12,
+    borderBottomLeftRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: -2, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 6,
+    zIndex: 99,
+  },
+  sideTabHandleText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1,
+    marginTop: 4,
+  },
 
-actionToolbar: {
-  flexDirection: 'row',
-  gap: 12,
-  marginBottom: 24,
-},
-toolbarBtnPrimary: {
-  flex: 1,
-  flexDirection: 'row',
-  backgroundColor: '#2d87aaff',
-  paddingVertical: 14,
-  paddingHorizontal: 16,
-  borderRadius: 14,
-  justifyContent: 'center',
-  alignItems: 'center',
-  shadowColor: '#fcfcfcff',
-  shadowOffset: { width: 0, height: 4 },
-  shadowOpacity: 0.2,
-  shadowRadius: 6,
-  elevation: 3,
-},
-toolbarBtnPrimaryText: {
-  color: '#FFF',
-  fontWeight: '800',
-  fontSize: 13,
-  marginLeft: 8,
-},
-toolbarBtnSecondary: {
-  flex: 1,
-  flexDirection: 'row',
-  backgroundColor: '#FFFFFF',
-  paddingVertical: 14,
-  paddingHorizontal: 16,
-  borderRadius: 14,
-  justifyContent: 'center',
-  alignItems: 'center',
-  borderWidth: 1,
-  borderColor: '#E2E8F0',
-},
-toolbarBtnSecondaryText: {
-  color: '#002B49',
-  fontWeight: '700',
-  fontSize: 13,
-  marginLeft: 8,
-},
-topHeaderRow: {
+  profileHeaderBox: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  profileName: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#002B49',
+  },
+  profileIdText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
+    marginTop: 2,
+  },
+
+  actionToolbar: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 24,
+  },
+  toolbarBtnPrimary: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: '#2d87aaff',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#fcfcfcff',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  toolbarBtnPrimaryText: {
+    color: '#FFF',
+    fontWeight: '800',
+    fontSize: 13,
+    marginLeft: 8,
+  },
+  toolbarBtnSecondary: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  toolbarBtnSecondaryText: {
+    color: '#002B49',
+    fontWeight: '700',
+    fontSize: 13,
+    marginLeft: 8,
+  },
+  topHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -1042,26 +1032,25 @@ topHeaderRow: {
     fontSize: 13,
     marginLeft: 6,
   },
-sourceBadge: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  paddingHorizontal: 8,
-  paddingVertical: 4,
-  borderRadius: 12,
-  borderWidth: 1,
-},
-dot: {
-  width: 6,
-  height: 6,
-  borderRadius: 3,
-  marginRight: 6,
-},
-sourceBadgeText: {
-  fontSize: 10,
-  fontWeight: '800',
-  letterSpacing: 0.5,
-},
-  // Activity List Block Styles
+  sourceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 6,
+  },
+  sourceBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
   activityList: { marginTop: 12 },
   activityRow: {
     flexDirection: 'row',

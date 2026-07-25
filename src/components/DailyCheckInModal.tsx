@@ -97,7 +97,7 @@ export default function DailyCheckInModal({
 
           <ScrollView showsVerticalScrollIndicator={false}>
             <Text style={styles.subtitle}>
-              Calibrate your daily AWS Bedrock AI coaching plan in 30 seconds.
+              Submit today&apos;s recovery signals and request an updated readiness plan.
             </Text>
 
             {/* 1. SLEEP QUALITY */}

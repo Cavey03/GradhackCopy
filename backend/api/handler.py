@@ -517,6 +517,13 @@ def handle_activity(event):
         "completed": body.get("completed", True),
         "createdAt": ts,
     }
+    # Optional detail the Log Exercise drawer collects. Written only when
+    # supplied, under the same field names the dashboard already reads back for
+    # seeded activities, so the Strain view shows what the member entered
+    # instead of blanks.
+    for field in ("distanceKm", "avgHeartRate", "maxHeartRate", "caloriesBurned"):
+        if body.get(field) is not None:
+            item[field] = body[field]
     timeseries_table.put_item(Item=_to_dynamo(item))
 
     prediction = get_prediction(member_id)

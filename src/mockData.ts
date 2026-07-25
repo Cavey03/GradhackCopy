@@ -66,6 +66,15 @@ export interface WeekPlanDay {
   provisional?: boolean;
 }
 
+export interface StrainMetrics {
+  lastWorkoutType: string;
+  lastWorkoutMin: number;
+  lastAvgHr?: number;
+  load7dMin: number;
+  workouts: number;
+  avgRpe?: number;
+}
+
 export interface RecoveryData {
   dataSource?: 'LIVE_API' | 'MOCK_FALLBACK';
   // What actually wrote the coaching prose. Independent of dataSource: the
@@ -93,6 +102,8 @@ export interface RecoveryData {
   intensity: string;
   vo2_max_baseline: number;
   vo2_max_current: number;
+  vo2_forecast_4_weeks?: number;
+  vo2_predicted_change?: number;
   confidence: number;
   ai_summary: string;
   ai_coaching_message: string;

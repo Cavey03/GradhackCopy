@@ -46,14 +46,20 @@ export default function SimulatorScreen({ navigation, route }: any) {
     setLoading(false);
 
     if (verdict) {
-      setResult({ question: textToEvaluate, ...verdict });
+      setResult({ question: textToEvaluate, dataSource: 'LIVE_API', ...verdict });
       return;
     }
 
+    // No local heuristic any more, so there is nothing to gate behind
+    // MOCK_FALLBACK_ENABLED here: an unreachable backend simply means the
+    // question was not assessed, and that is what we say. Substituting a
+    // locally invented verdict is exactly what dev2's mock-fallback gate was
+    // added to prevent.
     setResult({
       question: textToEvaluate,
+      dataSource: 'ERROR',
       status: 'neutral',
-      title: 'UNABLE TO ASSESS RIGHT NOW',
+      title: 'LIVE ANALYSIS UNAVAILABLE',
       summary:
         'The recovery service could not be reached, so this question has not been assessed. ' +
         'Follow the plan already shown on your dashboard and try again shortly.',
@@ -160,6 +166,14 @@ export default function SimulatorScreen({ navigation, route }: any) {
                   : styles.successBorder,
             ]}
           >
+            {/* dev2's provenance banner, kept: a result that did not come from
+                AWS must never look like one that did. */}
+            {result.dataSource !== 'LIVE_API' && (
+              <View style={styles.sourceWarning}>
+                <AlertTriangle size={14} color="#92400E" />
+                <Text style={styles.sourceWarningText}>LIVE AWS RESULT UNAVAILABLE</Text>
+              </View>
+            )}
             <View style={styles.resultHeader}>
               {result.status === 'warning' ? (
                 <AlertCircle size={22} color="#DC2626" />
@@ -264,6 +278,8 @@ const styles = StyleSheet.create({
   resultTitle: { fontSize: 15, fontWeight: '900', marginLeft: 8, letterSpacing: -0.2 },
   targetQueryLabel: { fontSize: 12, fontStyle: 'italic', color: '#64748B', marginBottom: 8 },
   resultSummary: { fontSize: 14, color: '#334155', fontWeight: '500', lineHeight: 22, marginBottom: 16 },
+  sourceWarning: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#F59E0B', borderRadius: 10, padding: 9, marginBottom: 12 },
+  sourceWarningText: { color: '#92400E', fontSize: 10, fontWeight: '900', letterSpacing: 0.5, marginLeft: 6 },
   
   bedrockBox: { backgroundColor: '#F8FAFC', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#F1F5F9' },
   bedrockTitle: { fontSize: 11, fontWeight: '800', color: '#E11082', marginBottom: 4, letterSpacing: 0.5 },

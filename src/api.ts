@@ -502,6 +502,20 @@ export async function submitCheckIn(
         vo2_max_current: p.current_vo2 ?? currentData.vo2_max_current,
         vo2_forecast_4_weeks: p.predicted_vo2_4_weeks,
         vo2_predicted_change: p.predicted_vo2_change,
+
+        // The plan must come from this response, not survive from the previous
+        // one. The backend re-runs both models on every check-in and rebuilds
+        // the envelope, so carrying the old plan through left the session card
+        // describing a walk while the headline above it said rest — and the
+        // stale plan was validated against an envelope that no longer applies.
+        //
+        // A check-in with new pain deliberately drops a Gemini plan back to the
+        // deterministic one: it was designed for limits that have since moved,
+        // so the tab correctly invites a regenerate rather than keeping it.
+        exercisePlan: p.exercise_plan,
+        weekPlan: p.week_plan,
+        planEnvelope: p.plan_envelope,
+        planSource: p.plan_source,
         ai_summary: coach.summary,
         ai_coaching_message: coach.coaching_message,
         explainability: {

@@ -12,6 +12,17 @@ def _json_default(o):
     raise TypeError(f"Not JSON serializable: {type(o)}")
 
 
+def _to_dynamo(v):
+    """DynamoDB rejects Python floats — convert them (recursively) to Decimal."""
+    if isinstance(v, float):
+        return Decimal(str(v))
+    if isinstance(v, list):
+        return [_to_dynamo(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _to_dynamo(x) for k, x in v.items()}
+    return v
+
+
 def _latest_item(member_id, type_prefix):
     """Newest item of a given type for a member, or None."""
     resp = timeseries_table.query(
@@ -175,7 +186,7 @@ def handle_onboarding(event):
         "activityPreference": body.get("activityPreference", "walk"),
         "createdAt": _now_iso(),
     }
-    members_table.put_item(Item=item)
+    members_table.put_item(Item=_to_dynamo(item))
     return _response(201, {"memberId": member_id, "status": "created"})
 
 
@@ -200,7 +211,7 @@ def handle_checkin(event):
         "mood": body.get("mood"),
         "createdAt": ts,
     }
-    timeseries_table.put_item(Item=item)
+    timeseries_table.put_item(Item=_to_dynamo(item))
 
     # Mock prediction for now; later this triggers Member 4's inference pipeline
     return _response(201, {
@@ -231,7 +242,7 @@ def handle_activity(event):
         "completed": body.get("completed", True),
         "createdAt": ts,
     }
-    timeseries_table.put_item(Item=item)
+    timeseries_table.put_item(Item=_to_dynamo(item))
 
     return _response(201, {
         "status": "recorded",
@@ -272,10 +283,54 @@ def handle_wearable_simulate(event):
                 "activeMinutes": r.get("activeMinutes"),
                 "createdAt": ts,
             }
-            batch.put_item(Item=item)
+            batch.put_item(Item=_to_dynamo(item))
             written.append(item["sk"])
 
     return _response(201, {"status": "inserted", "count": len(written), "sks": written})
+
+
+def handle_simulation(event):
+    body = _parse_body(event)
+    if body is None:
+        return _response(400, {"error": "invalid_json"})
+
+    member_id = body.get("memberId")
+    if not member_id:
+        return _response(400, {"error": "memberId is required"})
+
+    # Keyword heuristic stands in for the real model until Member 4's
+    # pipeline lands; response shape matches plan section 10 contract.
+    question = (body.get("question") or "").lower()
+    proposed = body.get("proposed") or {}
+    high_strain_words = (
+        "run", "sprint", "race", "heavy", "squat", "hiit", "match",
+        "game", "performance", "band", "gig", "push through",
+    )
+    risky = (
+        any(w in question for w in high_strain_words)
+        or proposed.get("intensity") in ("moderate", "high")
+    )
+
+    if risky:
+        comparison = {
+            "setback_probability_proposed": 0.44,
+            "setback_probability_recommended": 0.19,
+            "verdict": "not_advised",
+            "saferAlternative": {"activity": "walk", "durationMinutes": 25, "intensity": "low"},
+        }
+    else:
+        comparison = {
+            "setback_probability_proposed": 0.21,
+            "setback_probability_recommended": 0.19,
+            "verdict": "advised",
+            "saferAlternative": {"activity": "walk", "durationMinutes": 20, "intensity": "low"},
+        }
+
+    return _response(200, {
+        "proposed": proposed or {"activity": question or "unspecified", "intensity": "unknown"},
+        "recommended": MODEL_PREDICTION,
+        "comparison": comparison,
+    })
 
 
 # ---- Routing ----
@@ -283,7 +338,6 @@ def handle_wearable_simulate(event):
 MOCK_ROUTES = {
     ("POST", "/auth/demo"): (200, DEMO_MEMBER),
     ("POST", "/recovery/infer"): (200, MODEL_PREDICTION),
-    ("POST", "/simulations"): (200, SIMULATION_RESULT),
     ("POST", "/coach/messages"): (200, COACH_MESSAGE),
 }
 
@@ -292,6 +346,7 @@ REAL_ROUTES = {
     ("POST", "/checkins"): handle_checkin,
     ("POST", "/activities"): handle_activity,
     ("POST", "/wearables/simulate"): handle_wearable_simulate,
+    ("POST", "/simulations"): handle_simulation,
     ("GET", "/dashboard"): handle_dashboard,
 }
 

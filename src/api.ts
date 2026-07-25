@@ -107,14 +107,31 @@ interface BackendDashboard {
 }
 
 interface BackendSimulation {
-  proposed: { activity: string; distanceKm?: number; intensity: string };
-  recommended: BackendPrediction;
-  comparison: {
-    setback_probability_proposed: number;
-    setback_probability_recommended: number;
-    verdict: string; // e.g. "not_advised"
-    saferAlternative: { activity: string; durationMinutes: number; intensity: string };
+  question: string;
+  proposed: {
+    activity: string | null;
+    unmodelled: string | null;
+    durationMinutes: number | null;
+    intensity: string | null;
+    distanceKm: number | null;
   };
+  verdict: 'advised' | 'modify' | 'not_advised' | 'not_assessable' | 'follow_plan';
+  headline: string;
+  explanation: string;
+  reasons: { code: string; detail: string }[];
+  model: {
+    readiness: string;
+    setback_probability: number | null;
+    confidence: number | null;
+    model_version?: string;
+  };
+  envelope: {
+    max_total_minutes: number;
+    max_intensity: string;
+    allowed_activities: string[];
+    is_rest_day: boolean;
+  };
+  recommended: { activity: string; durationMinutes: number; intensity: string };
 }
 
 export class MemberNotFoundError extends Error {
@@ -390,15 +407,24 @@ export async function generatePlan(
 }
 
 export interface SimulationVerdict {
-  status: 'approved' | 'warning';
+  status: 'approved' | 'warning' | 'neutral';
   title: string;
   summary: string;
-  bedrockRationale: string;
+  // What the backend understood the question to be asking, echoed back so a
+  // misparse is visible instead of silently driving the verdict.
+  parsed: string;
+  // The model-derived limits the answer was judged against.
+  limits: string;
+  riskLabel: string;
+  modelVersion?: string;
 }
 
 /**
  * Ask the backend to evaluate a proposed activity ("can I run 5km?").
- * Returns null on failure so the screen can fall back to its local logic.
+ *
+ * The answer is judged against the same model-derived envelope that bounds the
+ * exercise plan, so a what-if verdict and the plan can never disagree. Costs no
+ * LLM request. Returns null on failure so the screen can say so.
  */
 export async function evaluateActivity(
   memberId: string,
@@ -409,20 +435,41 @@ export async function evaluateActivity(
       memberId,
       question,
     });
-    const risky = sim.comparison.verdict === 'not_advised';
-    const proposedPct = Math.round(sim.comparison.setback_probability_proposed * 100);
-    const recommendedPct = Math.round(sim.comparison.setback_probability_recommended * 100);
-    const alt = sim.comparison.saferAlternative;
+
+    const status =
+      sim.verdict === 'advised' || sim.verdict === 'follow_plan'
+        ? 'approved'
+        : sim.verdict === 'not_assessable'
+          ? 'neutral'
+          : 'warning';
+
+    const p = sim.proposed;
+    const parsedBits = [
+      p.durationMinutes ? `${p.durationMinutes} min` : null,
+      p.distanceKm ? `${p.distanceKm} km` : null,
+      p.activity ?? p.unmodelled ?? 'no activity recognised',
+      p.intensity ? `at ${title(p.intensity)} intensity` : null,
+    ].filter(Boolean);
+
+    const risk = sim.model.setback_probability;
     return {
-      status: risky ? 'warning' : 'approved',
-      title: risky ? 'MODIFIED PROTOCOL RECOMMENDED' : 'SAFE TO PROCEED',
-      summary: risky
-        ? `This plan carries a ${proposedPct}% setback probability vs ${recommendedPct}% for your recommended plan. Safer alternative: ${alt.durationMinutes} min ${title(alt.activity)} at ${title(alt.intensity)} intensity.`
-        : `Setback probability is ${proposedPct}%, within your safe range. Your physiological markers support this activity.`,
-      bedrockRationale: `Recovery model compared your proposed plan (${proposedPct}% setback risk) against the AI-recommended plan (${recommendedPct}%) using your latest check-in and wearable trend data.`,
+      status,
+      title: sim.headline,
+      summary: sim.explanation,
+      parsed: parsedBits.join(' · '),
+      limits: sim.envelope.is_rest_day
+        ? 'Rest day — no activity permitted'
+        : `${sim.envelope.max_total_minutes} min max · up to ${title(sim.envelope.max_intensity)} · ${
+            sim.envelope.allowed_activities.map(title).join(', ') || 'rest only'
+          }`,
+      riskLabel:
+        risk != null
+          ? `${Math.round(risk * 100)}% setback risk today (${sim.model.readiness})`
+          : `Readiness: ${sim.model.readiness}`,
+      modelVersion: sim.model.model_version,
     };
   } catch (error) {
-    console.warn('⚠️ Simulation API unreachable, using local fallback.', error);
+    console.warn('⚠️ Simulation API unreachable.', error);
     return null;
   }
 }

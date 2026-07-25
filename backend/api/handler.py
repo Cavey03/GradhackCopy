@@ -10,6 +10,7 @@ from boto3.dynamodb.conditions import Key
 import exercise_plan
 import llm_client
 import prompt_orchestrator
+import what_if
 
 
 def _json_default(o):
@@ -637,39 +638,29 @@ def handle_simulation(event):
     if not member_id:
         return _response(400, {"error": "memberId is required"})
 
-    # Keyword heuristic stands in for the real model until Member 4's
-    # pipeline lands; response shape matches plan section 10 contract.
-    question = (body.get("question") or "").lower()
-    proposed = body.get("proposed") or {}
-    high_strain_words = (
-        "run", "sprint", "race", "heavy", "squat", "hiit", "match",
-        "game", "performance", "band", "gig", "push through",
-    )
-    risky = (
-        any(w in question for w in high_strain_words)
-        or proposed.get("intensity") in ("moderate", "high")
-    )
+    # Judged against the same envelope that bounds the exercise plan, using
+    # the member's real prediction. No LLM: a safety judgement should not
+    # depend on generated text, and this endpoint therefore costs nothing.
+    member = members_table.get_item(Key={"memberId": member_id}).get("Item") or {}
+    history = _recent_history(member_id)
+    prediction = _latest_item(member_id, "PREDICTION") or get_prediction(member_id)
+    envelope = exercise_plan.plan_envelope(prediction, member, history)
 
-    if risky:
-        comparison = {
-            "setback_probability_proposed": 0.44,
-            "setback_probability_recommended": 0.19,
-            "verdict": "not_advised",
-            "saferAlternative": {"activity": "walk", "durationMinutes": 25, "intensity": "low"},
-        }
-    else:
-        comparison = {
-            "setback_probability_proposed": 0.21,
-            "setback_probability_recommended": 0.19,
-            "verdict": "advised",
-            "saferAlternative": {"activity": "walk", "durationMinutes": 20, "intensity": "low"},
-        }
+    # Offer the plan the app is already showing, so the safer alternative here
+    # is the real one rather than a second opinion invented on the spot.
+    recommended = {
+        "activity": prediction.get("recommended_activity"),
+        "durationMinutes": prediction.get("duration_minutes"),
+        "intensity": prediction.get("intensity"),
+    }
 
-    return _response(200, {
-        "proposed": proposed or {"activity": question or "unspecified", "intensity": "unknown"},
-        "recommended": MODEL_PREDICTION,
-        "comparison": comparison,
-    })
+    return _response(200, what_if.evaluate(
+        question=body.get("question"),
+        override=body.get("proposed"),
+        prediction=prediction,
+        envelope=envelope,
+        recommended=recommended,
+    ))
 
 
 # ---- Routing ----

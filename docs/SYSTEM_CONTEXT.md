@@ -224,7 +224,7 @@ API Gateway `{proxy+}` catch-all.
 | POST | `/activities` | **Real** — writes `ACTIVITY#`, re-infers |
 | POST | `/onboarding` | **Real** — writes member |
 | POST | `/wearables/simulate` | **Real** — writes `READING#` items |
-| POST | `/simulations` | **Mock** — keyword heuristic, see §7 |
+| POST | `/simulations` | **Real** — judged against the plan envelope, see §6b |
 | POST | `/auth/demo` | Mock — static demo member |
 | POST | `/coach/messages` | **Real** — Gemini, grounded in the stored prediction |
 
@@ -353,6 +353,69 @@ aws logs tail /aws/lambda/RecoveryPlatformStack-ApiFnE0725F78-KIYezPWTw6wR \
 
 ---
 
+## 6b. The exercise plan layer (branch `devGem`)
+
+Gemini now designs the session itself. Before this it could not emit plan
+fields at all, so it was structurally incapable of contradicting the model —
+that guarantee is replaced, not dropped, by `backend/api/exercise_plan.py`:
+
+1. `plan_envelope()` computes what the member may do today from the readiness
+   class and hard clinical flags **only**, before the LLM is called.
+2. Gemini designs a warm-up / main / cool-down plus a provisional 7-day week
+   inside it.
+3. `validate_plan()` re-checks every block and week day against that envelope
+   and **rejects the plan whole** on any violation. No repair path.
+4. `rules_plan()` — the existing `_plan_activity()` output — renders instead.
+
+Envelope ceilings are the same arithmetic as `_plan_activity()`, so an LLM plan
+can only ever be at or below what the rules already permit. Headline
+activity/duration/intensity are re-derived from whichever plan won, so the hero
+card and the block detail cannot disagree.
+
+**`plan_source` reports what happened**, in the same spirit as `coach_source`:
+
+| Value | Meaning |
+|---|---|
+| `gemini` | the LLM's plan passed validation |
+| `rules` | the LLM was asked and its plan was **rejected** |
+| `not_requested` | no LLM call was made — deterministic plan, no cost |
+
+### LLM calls are on-demand only
+`get_prediction(use_llm=False)` is the default. **`POST /plan` is the only call
+site that passes True**, and it exists to serve the app's Generate button.
+Dashboard loads, check-ins and activities run both models and build the
+deterministic plan for free. Prose and plan come from *one* request, never two.
+
+### `/simulations` is real now
+`what_if.py` parses the question deterministically (regex, no LLM — a safety
+judgement should not depend on generated text) and judges it against the same
+envelope, so a what-if answer and the plan can never disagree. Costs nothing.
+It quotes the model's real P(REDUCE) and deliberately does **not** invent a
+"probability if you do this instead": the readiness model predicts the next
+session from history, not the outcome of a hypothetical.
+
+### Verified
+- `backend/tests/test_exercise_plan.py` — 52 checks, stdlib only, no AWS.
+- Live sweep, all 122 members: 1,249 assertions, 0 failures. A plan on exactly
+  every ceiling is accepted; one minute / intensity step / RPE point / banned
+  activity over is rejected.
+- Live Gemini, 40 members across all readiness classes: **40/40 valid, no
+  envelope violations**, median 4.6s.
+
+### Gotchas found here
+1. `gemini-3.6-flash` rejects the plan request with a bare 400 naming no field.
+   Retry-without-`thinkingConfig` now fires on any 400. **`gemini-3.5-flash` is
+   the deployed model** and the one proven with this payload.
+2. `clinicianCleared` is `"Yes"`/`"No"` **text**, not a boolean — reading only
+   the boolean left 19 of 122 uncleared members unrestricted.
+3. A contraindication rests the whole week; today's pain rests only day 1 and
+   lets days 2-7 plan a graded return. Different clinical meaning, same-looking
+   rest day.
+4. Free-string `activity` invited `"mobility and walk"` — both activity fields
+   are enumerated in the response schema now.
+
+---
+
 ## 7. Frontend
 
 Expo 57 / React Native 0.86 / TypeScript. `npm install` then `npx expo start`.
@@ -371,9 +434,6 @@ and the API has no authorizer.
 ### Still mock in the UI
 - **7-day trend chart** — hardcoded in `TrendChart.tsx`, identical for every
   member. (Reworked in "Verion1.2"; re-verify whether it now has a data source.)
-- **What-if simulator** — `/simulations` scans the question for words like
-  "run", "sprint", "heavy" and returns hardcoded probabilities (0.44 vs 0.19).
-  It never invokes a model.
 ### Wearable recovery trend simulator (presenter tool)
 `src/components/WearableSimulatorModal.tsx`, opened from SimulatorScreen via
 the amber "▶ Recovery Trend Simulator (Demo)" button.
@@ -588,11 +648,12 @@ confusion. Pick one canonical checkout.
 | Item | Status |
 |---|---|
 | LLM coach (APO + Gemini) | **done** — live, §6a |
+| Gemini-authored exercise plan inside a model envelope | **done** — §6b, branch `devGem` |
+| Make `/simulations` invoke the model instead of keyword matching | **done** — §6b |
 | Wearable trend simulator | **done** — logic verified against live AWS; bundles clean, but never manually clicked through |
 | Set a fresh Gemini key before judging — the current one is short-lived | **required** |
 | Relabel "AWS Bedrock Rationale" → Gemini | **done** — plus a truthful `coach_source` |
 | Rename the `bedrock_rationale` field (label fixed, field name stale) | unassigned |
-| Make `/simulations` invoke the model instead of keyword matching | unassigned |
 | Surface `predicted_vo2_4_weeks` in the UI — Model 2's output is unused | unassigned |
 | Replace the activity rule (`_plan_activity`) — see the defect in §7 | teammates |
 | Real SHAP attribution to replace rule-based `top_factors` | unassigned |

@@ -37,7 +37,11 @@ export default function SimulatorScreen({ navigation, route }: any) {
     setLoading(true);
     setResult(null);
 
-    // Ask the backend simulation endpoint; fall back to local heuristics offline
+    // The backend judges this against the member's real model envelope. If it
+    // is unreachable we say so rather than inventing a verdict: the previous
+    // offline path returned confident physiological claims ("parasympathetic
+    // tone is dominant", "rMSSD values are optimal") that were pure invention
+    // and credited a service this stack has never been able to call.
     const verdict = await evaluateActivity(entityNumber, textToEvaluate);
     setLoading(false);
 
@@ -46,27 +50,16 @@ export default function SimulatorScreen({ navigation, route }: any) {
       return;
     }
 
-    const lower = textToEvaluate.toLowerCase();
-    let status = 'approved';
-    let title = 'APPROVED';
-    let summary = '';
-
-    if (lower.includes('band') || lower.includes('performance') || lower.includes('heavy') || lower.includes('run')) {
-      status = 'warning';
-      title = 'MODIFIED PROTOCOL RECOMMENDED';
-      summary = 'Autonomic baseline indicates moderate recovery debt. You may participate, but cap exertion at 70% intensity and hydrate aggressively.';
-    } else {
-      status = 'approved';
-      title = 'SAFE TO PROCEED';
-      summary = 'Parasympathetic tone is dominant and rMSSD values are optimal. Your physiological markers support this activity.';
-    }
-
     setResult({
       question: textToEvaluate,
-      status,
-      title,
-      summary,
-      bedrockRationale: 'AWS Bedrock cross-referenced 7-day HRV trailing baseline, sleep efficiency metrics, and historical strain logs to formulate this safety boundary.'
+      status: 'neutral',
+      title: 'UNABLE TO ASSESS RIGHT NOW',
+      summary:
+        'The recovery service could not be reached, so this question has not been assessed. ' +
+        'Follow the plan already shown on your dashboard and try again shortly.',
+      parsed: '—',
+      limits: 'Unavailable offline',
+      riskLabel: 'No model response',
     });
   };
 
@@ -157,14 +150,37 @@ export default function SimulatorScreen({ navigation, route }: any) {
 
         {/* RESULT CARD */}
         {result && (
-          <View style={[styles.resultCard, result.status === 'warning' ? styles.warningBorder : styles.successBorder]}>
+          <View
+            style={[
+              styles.resultCard,
+              result.status === 'warning'
+                ? styles.warningBorder
+                : result.status === 'neutral'
+                  ? styles.neutralBorder
+                  : styles.successBorder,
+            ]}
+          >
             <View style={styles.resultHeader}>
               {result.status === 'warning' ? (
                 <AlertCircle size={22} color="#DC2626" />
+              ) : result.status === 'neutral' ? (
+                <AlertCircle size={22} color="#64748B" />
               ) : (
                 <CheckCircle2 size={22} color="#16A34A" />
               )}
-              <Text style={[styles.resultTitle, { color: result.status === 'warning' ? '#DC2626' : '#16A34A' }]}>
+              <Text
+                style={[
+                  styles.resultTitle,
+                  {
+                    color:
+                      result.status === 'warning'
+                        ? '#DC2626'
+                        : result.status === 'neutral'
+                          ? '#475569'
+                          : '#16A34A',
+                  },
+                ]}
+              >
                 {result.title}
               </Text>
             </View>
@@ -172,10 +188,25 @@ export default function SimulatorScreen({ navigation, route }: any) {
             <Text style={styles.targetQueryLabel}>Query: "{result.question}"</Text>
             <Text style={styles.resultSummary}>{result.summary}</Text>
 
-            <View style={styles.bedrockBox}>
-              <Text style={styles.bedrockTitle}>AWS Bedrock Safety Rationale</Text>
-              <Text style={styles.bedrockText}>{result.bedrockRationale}</Text>
+            {/* Shown so a misread question is visible rather than silently
+                driving the verdict. */}
+            <View style={styles.factRow}>
+              <Text style={styles.factLabel}>Read as</Text>
+              <Text style={styles.factVal}>{result.parsed}</Text>
             </View>
+            <View style={styles.factRow}>
+              <Text style={styles.factLabel}>Today's limits</Text>
+              <Text style={styles.factVal}>{result.limits}</Text>
+            </View>
+            <View style={styles.factRow}>
+              <Text style={styles.factLabel}>Model</Text>
+              <Text style={styles.factVal}>{result.riskLabel}</Text>
+            </View>
+
+            <Text style={styles.provenanceText}>
+              Judged against the same readiness-model limits that produce your daily plan
+              {result.modelVersion ? ` · ${result.modelVersion}` : ''}
+            </Text>
           </View>
         )}
 
@@ -220,6 +251,15 @@ const styles = StyleSheet.create({
   resultCard: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 20, borderWidth: 1, ...Platform.select({ ios: { shadowColor: '#091E42', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.06, shadowRadius: 12 }, android: { elevation: 4 } }) },
   successBorder: { borderColor: '#BBF7D0' },
   warningBorder: { borderColor: '#FECACA' },
+  neutralBorder: { borderColor: '#E2E8F0' },
+
+  factRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
+    paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#F1F5F9',
+  },
+  factLabel: { fontSize: 12, color: '#64748B', fontWeight: '600', paddingRight: 12 },
+  factVal: { fontSize: 12, color: '#002B49', fontWeight: '800', flex: 1, textAlign: 'right' },
+  provenanceText: { fontSize: 10, color: '#94A3B8', marginTop: 12, fontWeight: '600', lineHeight: 15 },
   resultHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   resultTitle: { fontSize: 15, fontWeight: '900', marginLeft: 8, letterSpacing: -0.2 },
   targetQueryLabel: { fontSize: 12, fontStyle: 'italic', color: '#64748B', marginBottom: 8 },

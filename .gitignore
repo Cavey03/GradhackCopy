@@ -1,3 +1,5 @@
+# ---- Backend / infra (Member 1) ----
+
 # CDK / Node
 infra/node_modules/
 infra/cdk.out/
@@ -13,8 +15,46 @@ scripts/*.xlsx
 # Env / secrets
 .env
 *.env
+.env*.local
 
 # OS
 .DS_Store
 Thumbs.db
 *.xlsx
+*.pem
+
+# ---- Frontend / Expo ----
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.log
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android

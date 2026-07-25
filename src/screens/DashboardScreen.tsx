@@ -1,7 +1,7 @@
 // src/screens/DashboardScreen.tsx
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform } from 'react-native';
-import { OPTIMAL_STATE, WARNING_STATE, RecoveryData } from '../mockData';
+import { OPTIMAL_STATE, RecoveryData } from '../mockData';
 import { fetchDashboardData, submitCheckIn } from '../api';
 import { 
   ShieldCheck, 
@@ -30,6 +30,7 @@ export default function DashboardScreen({ navigation, route }: any) {
   const [activeCategory, setActiveCategory] = useState<CategoryType>('Recovery');
   const [showExplainability, setShowExplainability] = useState(true);
   const [checkInVisible, setCheckInVisible] = useState(false);
+  const [checkInStatus, setCheckInStatus] = useState<string | null>(null);
 
   // "Optimal" vs "at risk" is now derived from the data instead of a toggle
   const isOptimal = data.setback_probability < 0.4;
@@ -90,6 +91,15 @@ export default function DashboardScreen({ navigation, route }: any) {
     </Text>
   </View>
 </View>
+
+      {data.dataSource === 'MOCK_FALLBACK' && (
+        <View style={styles.mockWarning}>
+          <AlertTriangle size={16} color="#92400E" />
+          <Text style={styles.mockWarningText}>
+            Demo data is being shown. These values are not live AWS results.
+          </Text>
+        </View>
+      )}
 
     {/* TOP BRANDING & EXIT ROW */}
       <View style={styles.topHeaderRow}>
@@ -236,6 +246,28 @@ export default function DashboardScreen({ navigation, route }: any) {
                 </Text>
               </View>
             </View>
+            {data.vo2_forecast_4_weeks != null && (
+              <View style={styles.forecastBox}>
+                <Text style={styles.forecastLabel}>4-WEEK VO₂ MAX FORECAST</Text>
+                <Text style={styles.forecastValue}>
+                  {data.vo2_forecast_4_weeks} mL/kg/min
+                </Text>
+                {data.vo2_predicted_change != null && (
+                  <Text
+                    style={[
+                      styles.forecastChange,
+                      { color: data.vo2_predicted_change >= 0 ? '#15803D' : '#DC2626' },
+                    ]}
+                  >
+                    Predicted change: {data.vo2_predicted_change >= 0 ? '+' : ''}
+                    {data.vo2_predicted_change} mL/kg/min
+                  </Text>
+                )}
+                <Text style={styles.forecastDisclaimer}>
+                  Model forecast only — not an achieved measurement.
+                </Text>
+              </View>
+            )}
           </View>
         </>
       )}
@@ -446,6 +478,11 @@ export default function DashboardScreen({ navigation, route }: any) {
         <Text style={styles.planSub}>Target Intensity: {data.intensity}</Text>
         <Text style={styles.coachingMsg}>"{data.ai_coaching_message}"</Text>
       </View>
+      {checkInStatus && (
+        <View style={styles.checkInStatus}>
+          <Text style={styles.checkInStatusText}>{checkInStatus}</Text>
+        </View>
+      )}
 
       {/* AI EXPLAINABILITY CARD */}
       <View style={styles.explainCard}>
@@ -492,16 +529,17 @@ export default function DashboardScreen({ navigation, route }: any) {
       <DailyCheckInModal
         visible={checkInVisible}
         onClose={() => setCheckInVisible(false)}
-        onSubmitCheckIn={(hasSymptoms, details) => {
-          // Persist the check-in to DynamoDB (fire-and-forget; never blocks the demo)
-          submitCheckIn(entityNumber, details);
-          // Local plan shift until the real ML pipeline returns per-check-in predictions;
-          // keep the member's live VO2 values from the API
-          setData((prev) => ({
-            ...(hasSymptoms ? WARNING_STATE : OPTIMAL_STATE),
-            vo2_max_baseline: prev.vo2_max_baseline,
-            vo2_max_current: prev.vo2_max_current,
-          }));
+        onSubmitCheckIn={async (_hasSymptoms, details) => {
+          setCheckInStatus('Submitting check-in and requesting a fresh readiness prediction…');
+          const result = await submitCheckIn(entityNumber, details, data);
+          if (result.recorded && result.data) {
+            setData(result.data);
+            setCheckInStatus('Dashboard updated from the readiness prediction returned by AWS.');
+          } else {
+            setCheckInStatus(
+              'Check-in could not be confirmed. Existing dashboard values have not been changed.',
+            );
+          }
         }}
       />
 
@@ -556,6 +594,11 @@ const styles = StyleSheet.create({
   metricBox: { flex: 1, alignItems: 'center' },
   subText: { fontSize: 12, color: '#64748B', fontWeight: '600' },
   metricVal: { fontSize: 24, fontWeight: '900', color: '#002B49', marginTop: 4 },
+  forecastBox: { marginTop: 16, padding: 14, borderRadius: 14, backgroundColor: '#F0F9FF', borderWidth: 1, borderColor: '#BAE6FD', alignItems: 'center' },
+  forecastLabel: { fontSize: 11, fontWeight: '900', color: '#0369A1', letterSpacing: 0.8 },
+  forecastValue: { fontSize: 24, fontWeight: '900', color: '#002B49', marginTop: 5 },
+  forecastChange: { fontSize: 13, fontWeight: '800', marginTop: 4 },
+  forecastDisclaimer: { fontSize: 11, color: '#64748B', marginTop: 6, fontStyle: 'italic' },
   
   highlightCard: { backgroundColor: '#002B49', borderColor: '#001A2C' },
   planTitle: { fontSize: 22, fontWeight: '900', color: '#FFFFFF', marginTop: 8, letterSpacing: -0.5 },
@@ -732,6 +775,10 @@ sourceBadgeText: {
   fontWeight: '800',
   letterSpacing: 0.5,
 },
+  mockWarning: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#F59E0B', borderRadius: 12, padding: 12, marginBottom: 16 },
+  mockWarningText: { flex: 1, color: '#92400E', fontSize: 12, fontWeight: '700', lineHeight: 18, marginLeft: 8 },
+  checkInStatus: { backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', borderRadius: 12, padding: 10, marginBottom: 16 },
+  checkInStatusText: { color: '#1E40AF', fontSize: 12, fontWeight: '700', lineHeight: 18 },
   // Activity List Block Styles
   activityList: { marginTop: 12 },
   activityRow: {

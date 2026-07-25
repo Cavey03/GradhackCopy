@@ -4,8 +4,21 @@
 // network is unreachable so the demo can never break.
 import { OPTIMAL_STATE, WARNING_STATE, RecoveryData } from './mockData';
 
-export const BASE_URL =
-  'https://3ist8udh05.execute-api.eu-central-1.amazonaws.com/dev';
+const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
+
+if (!configuredApiUrl) {
+  throw new Error(
+    'Missing EXPO_PUBLIC_API_URL. Set it to the public AWS API Gateway stage URL before starting or building the frontend.',
+  );
+}
+
+export const BASE_URL = configuredApiUrl.replace(/\/+$/, '');
+
+// Mock data stays available for local development and deliberate demo builds,
+// but production exports must opt in so an AWS outage cannot look like live data.
+export const MOCK_FALLBACK_ENABLED =
+  process.env.EXPO_PUBLIC_ENABLE_MOCK_FALLBACK === 'true' ||
+  (__DEV__ && process.env.EXPO_PUBLIC_ENABLE_MOCK_FALLBACK !== 'false');
 
 // Warm requests return in well under a second, but a check-in or a first
 // dashboard load invokes the SageMaker serverless endpoint, and a cold
@@ -27,8 +40,19 @@ interface BackendPrediction {
   intensity: string; // "very_low" | "low" | "moderate"
   confidence: number;
   top_factors?: { feature: string; direction: string }[];
+  current_vo2?: number;
+  predicted_vo2_4_weeks?: number;
+  predicted_vo2_change?: number;
   // Set by the backend to whatever actually produced the coaching text.
   coach_source?: 'gemini' | 'fallback';
+  coach?: BackendCoach;
+}
+
+interface BackendCoach {
+  summary: string;
+  explanation: string;
+  coaching_message: string;
+  follow_up_question: string;
 }
 
 interface BackendReading {
@@ -70,12 +94,14 @@ interface BackendDashboard {
   recentActivities?: BackendActivity[];
   oldestReading?: BackendReading | null;
   prediction: BackendPrediction;
-  coach: {
-    summary: string;
-    explanation: string;
-    coaching_message: string;
-    follow_up_question: string;
-  };
+  coach: BackendCoach;
+}
+
+interface BackendCheckIn {
+  status: 'recorded';
+  checkinSk: string;
+  prediction: BackendPrediction;
+  coach: BackendCoach;
 }
 
 interface BackendSimulation {
@@ -193,6 +219,7 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
       surname: d.member.surname ?? template.member?.surname,
       injury: d.member.injury ?? (atRisk ? 'Elevated Strain Risk' : 'None / Cleared'),
     },
+    recentActivities,
     sleep,
     heart,
     strain,
@@ -206,7 +233,9 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
     duration_minutes: p.duration_minutes,
     intensity: title(p.intensity),
     vo2_max_baseline: vo2Baseline ?? template.vo2_max_baseline,
-    vo2_max_current: vo2Current ?? template.vo2_max_current,
+    vo2_max_current: p.current_vo2 ?? vo2Current ?? template.vo2_max_current,
+    vo2_forecast_4_weeks: p.predicted_vo2_4_weeks,
+    vo2_predicted_change: p.predicted_vo2_change,
     confidence: p.confidence,
     ai_summary: d.coach.summary,
     ai_coaching_message: d.coach.coaching_message,
@@ -245,8 +274,11 @@ export async function fetchDashboardData(memberId: string): Promise<RecoveryData
     return adaptDashboard(dashboard);
   } catch (error) {
     if (error instanceof MemberNotFoundError) throw error;
-    console.warn('⚠️ AWS API unavailable. Using fallback mock data.', error);
-    return OPTIMAL_STATE;
+    if (MOCK_FALLBACK_ENABLED) {
+      console.warn('⚠️ AWS API unavailable. Using clearly labelled fallback mock data.', error);
+      return OPTIMAL_STATE;
+    }
+    throw error;
   }
 }
 
@@ -264,16 +296,47 @@ export interface CheckInDetails {
 export async function submitCheckIn(
   memberId: string,
   details: CheckInDetails,
-): Promise<{ recorded: boolean }> {
+  currentData: RecoveryData,
+): Promise<{ recorded: boolean; data?: RecoveryData }> {
   try {
-    await request('POST', '/checkins', {
+    const response = await request<BackendCheckIn>('POST', '/checkins', {
       memberId,
       pain: details.soreness,
       fatigue: 6 - details.energy, // invert: UI collects energy, model wants fatigue
       confidence: details.sleepQuality,
       symptoms: details.symptoms,
     });
-    return { recorded: true };
+    const p = response.prediction;
+    const coach = response.coach ?? p.coach;
+    return {
+      recorded: true,
+      data: {
+        ...currentData,
+        dataSource: 'LIVE_API',
+        coachSource: p.coach_source ?? 'fallback',
+        recovery_score: p.recovery_score,
+        readiness_score: p.readiness_score,
+        recovery_stage: p.recovery_stage,
+        recovery_trend: title(p.recovery_trend),
+        setback_probability: p.setback_probability,
+        recommended_activity: title(p.recommended_activity),
+        duration_minutes: p.duration_minutes,
+        intensity: title(p.intensity),
+        confidence: p.confidence,
+        vo2_max_current: p.current_vo2 ?? currentData.vo2_max_current,
+        vo2_forecast_4_weeks: p.predicted_vo2_4_weeks,
+        vo2_predicted_change: p.predicted_vo2_change,
+        ai_summary: coach.summary,
+        ai_coaching_message: coach.coaching_message,
+        explainability: {
+          ...currentData.explainability,
+          primary_factor: p.top_factors?.length
+            ? title(p.top_factors[0].feature)
+            : currentData.explainability.primary_factor,
+          bedrock_rationale: coach.explanation,
+        },
+      },
+    };
   } catch (error) {
     console.warn('⚠️ Check-in not persisted (API unreachable).', error);
     return { recorded: false };

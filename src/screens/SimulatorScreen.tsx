@@ -12,7 +12,7 @@ import {
   KeyboardAvoidingView 
 } from 'react-native';
 import { Sparkles, ArrowLeft, ShieldCheck, AlertTriangle, Send, CheckCircle2, XCircle, AlertCircle } from 'lucide-react-native';
-import { evaluateActivity } from '../api';
+import { evaluateActivity, MOCK_FALLBACK_ENABLED } from '../api';
 
 export default function SimulatorScreen({ navigation, route }: any) {
   const entityNumber = route?.params?.entityNumber || 'ENT000122';
@@ -40,7 +40,19 @@ export default function SimulatorScreen({ navigation, route }: any) {
     setLoading(false);
 
     if (verdict) {
-      setResult({ question: textToEvaluate, ...verdict });
+      setResult({ question: textToEvaluate, dataSource: 'LIVE_API', ...verdict });
+      return;
+    }
+
+    if (!MOCK_FALLBACK_ENABLED) {
+      setResult({
+        question: textToEvaluate,
+        dataSource: 'ERROR',
+        status: 'warning',
+        title: 'LIVE ANALYSIS UNAVAILABLE',
+        summary: 'The AWS simulation endpoint could not be reached. No local result has been substituted.',
+        bedrockRationale: '',
+      });
       return;
     }
 
@@ -61,10 +73,11 @@ export default function SimulatorScreen({ navigation, route }: any) {
 
     setResult({
       question: textToEvaluate,
+      dataSource: 'MOCK_FALLBACK',
       status,
       title,
       summary,
-      bedrockRationale: 'AWS Bedrock cross-referenced 7-day HRV trailing baseline, sleep efficiency metrics, and historical strain logs to formulate this safety boundary.'
+      bedrockRationale: 'Local demo logic generated this example result. It was not returned by AWS or a prediction model.'
     });
   };
 
@@ -142,6 +155,16 @@ export default function SimulatorScreen({ navigation, route }: any) {
         {/* RESULT CARD */}
         {result && (
           <View style={[styles.resultCard, result.status === 'warning' ? styles.warningBorder : styles.successBorder]}>
+            {result.dataSource !== 'LIVE_API' && (
+              <View style={styles.sourceWarning}>
+                <AlertTriangle size={14} color="#92400E" />
+                <Text style={styles.sourceWarningText}>
+                  {result.dataSource === 'MOCK_FALLBACK'
+                    ? 'DEMO RESULT — NOT LIVE AWS DATA'
+                    : 'LIVE AWS RESULT UNAVAILABLE'}
+                </Text>
+              </View>
+            )}
             <View style={styles.resultHeader}>
               {result.status === 'warning' ? (
                 <AlertCircle size={22} color="#DC2626" />
@@ -156,10 +179,16 @@ export default function SimulatorScreen({ navigation, route }: any) {
             <Text style={styles.targetQueryLabel}>Query: "{result.question}"</Text>
             <Text style={styles.resultSummary}>{result.summary}</Text>
 
-            <View style={styles.bedrockBox}>
-              <Text style={styles.bedrockTitle}>AWS Bedrock Safety Rationale</Text>
-              <Text style={styles.bedrockText}>{result.bedrockRationale}</Text>
-            </View>
+            {result.bedrockRationale ? (
+              <View style={styles.bedrockBox}>
+                <Text style={styles.bedrockTitle}>
+                  {result.dataSource === 'LIVE_API'
+                    ? 'Recovery Model Comparison'
+                    : 'Local Demo Rationale'}
+                </Text>
+                <Text style={styles.bedrockText}>{result.bedrockRationale}</Text>
+              </View>
+            ) : null}
           </View>
         )}
 
@@ -199,6 +228,8 @@ const styles = StyleSheet.create({
   resultTitle: { fontSize: 15, fontWeight: '900', marginLeft: 8, letterSpacing: -0.2 },
   targetQueryLabel: { fontSize: 12, fontStyle: 'italic', color: '#64748B', marginBottom: 8 },
   resultSummary: { fontSize: 14, color: '#334155', fontWeight: '500', lineHeight: 22, marginBottom: 16 },
+  sourceWarning: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FEF3C7', borderWidth: 1, borderColor: '#F59E0B', borderRadius: 10, padding: 9, marginBottom: 12 },
+  sourceWarningText: { color: '#92400E', fontSize: 10, fontWeight: '900', letterSpacing: 0.5, marginLeft: 6 },
   
   bedrockBox: { backgroundColor: '#F8FAFC', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#F1F5F9' },
   bedrockTitle: { fontSize: 11, fontWeight: '800', color: '#E11082', marginBottom: 4, letterSpacing: 0.5 },

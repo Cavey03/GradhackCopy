@@ -192,8 +192,8 @@ export default function DashboardScreen({ navigation, route }: any) {
 
         {/* DYNAMIC CATEGORY CONTENT */}
 
-        {/* 1. RECOVERY VIEW (Default Hero View) */}
-        {(activeCategory === 'Recovery' || activeCategory === 'AI Plan') && (
+        {/* 1. RECOVERY VIEW */}
+        {activeCategory === 'Recovery' && (
           <>
             <View style={styles.card}>
               <View style={styles.cardHeaderRow}>
@@ -432,14 +432,27 @@ export default function DashboardScreen({ navigation, route }: any) {
           </View>
         )}
 
-        {/* PRESCRIBED PLAN (Visible across all views) */}
+        {/* 6. DEDICATED AI PLAN VIEW */}
         {activeCategory === 'AI Plan' && (
-          <View style={[styles.card, styles.highlightCard]}>
-            <Text style={styles.cardTitleLight}>TODAY'S AI PRESCRIBED PLAN</Text>
-            <Text style={styles.planTitle}>{data.duration_minutes} min {data.recommended_activity}</Text>
-            <Text style={styles.planSub}>Target Intensity: {data.intensity}</Text>
-            <Text style={styles.coachingMsg}>"{data.ai_coaching_message}"</Text>
-          </View>
+          <>
+            <View style={[styles.card, styles.highlightCard]}>
+              <View style={styles.cardHeaderRow}>
+                <Sparkles size={18} color="#E11082" />
+                <Text style={[styles.cardTitleLight, { marginLeft: 6 }]}>TODAY'S AI PRESCRIBED PLAN</Text>
+              </View>
+              <Text style={styles.planTitle}>{data.duration_minutes} min {data.recommended_activity}</Text>
+              <Text style={styles.planSub}>Target Intensity: {data.intensity}</Text>
+              <Text style={styles.coachingMsg}>"{data.ai_coaching_message}"</Text>
+            </View>
+
+            <View style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <Sparkles size={16} color="#002B49" />
+                <Text style={[styles.cardTitle, { marginLeft: 6 }]}>AI RATIONALE & INSIGHTS</Text>
+              </View>
+              <Text style={styles.aiSummary}>{data.ai_summary}</Text>
+            </View>
+          </>
         )}
 
       </ScrollView>

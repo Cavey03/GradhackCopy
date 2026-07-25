@@ -7,7 +7,12 @@ import { OPTIMAL_STATE, WARNING_STATE, RecoveryState } from './mockData';
 export const BASE_URL =
   'https://3ist8udh05.execute-api.eu-central-1.amazonaws.com/dev';
 
-const TIMEOUT_MS = 5000;
+// Warm requests return in well under a second, but a check-in or a first
+// dashboard load invokes the SageMaker serverless endpoint, and a cold
+// container takes ~10s to start. 5s aborted those and silently dropped the
+// app onto mock data. The API Gateway hard limit is 29s and the Lambda's own
+// timeout is 25s, so 20s stays inside both.
+const TIMEOUT_MS = 20000;
 
 // ---------- Backend response shapes (see docs/API_CONTRACT.md) ----------
 

@@ -7,7 +7,17 @@ export interface MemberProfile {
   injury?: string;
 }
 
+export interface ActivityItem {
+  sk: string;
+  name: string;
+  calories: number | null;
+  avgHr: number | null;
+  date: string;
+  distanceKm: number | null;
+}
+
 export interface RecoveryData {
+  dataSource?: 'LIVE_API' | 'MOCK_FALLBACK';
   recovery_score: number;
   readiness_score: number;
   recovery_stage: number;
@@ -30,6 +40,7 @@ export interface RecoveryData {
   };
   // Profile data mapped from DynamoDB member record
   member?: MemberProfile;
+  recentActivities?: ActivityItem[];
   sleep?: {
     latestHours: number;
     avgHours: number;
@@ -52,6 +63,7 @@ export interface RecoveryData {
 }
 
 export const OPTIMAL_STATE: RecoveryData = {
+  dataSource: 'MOCK_FALLBACK',
   member: {
     memberId: 'ENT000122',
     firstName: 'Marnus',
@@ -71,6 +83,15 @@ export const OPTIMAL_STATE: RecoveryData = {
   confidence: 0.94,
   ai_summary: "Cardiovascular strain is low and HRV has fully stabilized.",
   ai_coaching_message: "You are clear for standard Zone 2 aerobic training today.",
+  recentActivities: [
+    { sk: 'ACTIVITY#2026-07-24', name: 'Zone 2 Run', calories: 420, avgHr: 142, date: '2026-07-24', distanceKm: 6.2 },
+    { sk: 'ACTIVITY#2026-07-22', name: 'Road Cycling', calories: 510, avgHr: 138, date: '2026-07-22', distanceKm: 18.5 },
+    { sk: 'ACTIVITY#2026-07-20', name: 'Recovery Walk', calories: 180, avgHr: 102, date: '2026-07-20', distanceKm: 3.1 },
+    { sk: 'ACTIVITY#2026-07-18', name: 'Intervals', calories: 490, avgHr: 165, date: '2026-07-18', distanceKm: 5.0 },
+    { sk: 'ACTIVITY#2026-07-16', name: 'Pool Swim', calories: 340, avgHr: 128, date: '2026-07-16', distanceKm: 1.8 },
+    { sk: 'ACTIVITY#2026-07-14', name: 'Tempo Run', calories: 450, avgHr: 156, date: '2026-07-14', distanceKm: 7.2 },
+    { sk: 'ACTIVITY#2026-07-12', name: 'Gym Strength', calories: 280, avgHr: 118, date: '2026-07-12', distanceKm: null },
+  ],
   explainability: {
     primary_factor: "HRV Recovery & Balanced Strain",
     resting_hr_delta: "-2 bpm vs baseline",
@@ -81,6 +102,7 @@ export const OPTIMAL_STATE: RecoveryData = {
 };
 
 export const WARNING_STATE: RecoveryData = {
+  dataSource: 'MOCK_FALLBACK',
   member: {
     memberId: 'ENT000122',
     firstName: 'Marnus',
@@ -100,6 +122,12 @@ export const WARNING_STATE: RecoveryData = {
   confidence: 0.89,
   ai_summary: "High cardiovascular fatigue detected. Cardiac drift risk is elevated.",
   ai_coaching_message: "Focus on low-strain active recovery. High intensity today increases setback risk by 62%.",
+  recentActivities: [
+    { sk: 'ACTIVITY#2026-07-24', name: 'Heavy HIIT Run', calories: 610, avgHr: 178, date: '2026-07-24', distanceKm: 8.0 },
+    { sk: 'ACTIVITY#2026-07-23', name: 'Leg Day Strength', calories: 420, avgHr: 152, date: '2026-07-23', distanceKm: null },
+    { sk: 'ACTIVITY#2026-07-21', name: 'Threshold Cycling', calories: 680, avgHr: 164, date: '2026-07-21', distanceKm: 24.0 },
+    { sk: 'ACTIVITY#2026-07-19', name: '5km Sprint', calories: 380, avgHr: 171, date: '2026-07-19', distanceKm: 5.0 },
+  ],
   explainability: {
     primary_factor: "Elevated Resting HR & Accumulated Load",
     resting_hr_delta: "+7 bpm vs baseline",
@@ -108,3 +136,13 @@ export const WARNING_STATE: RecoveryData = {
     bedrock_rationale: "Bedrock Claude 3.5 Sonnet flagged sympathetic tone elevation."
   }
 };
+
+export const MOCK_SIMULATION_RESULT = {
+  proposed_activity: "5 km Run",
+  risk_level: "HIGH",
+  safer_alternative: "20-minute Light Jog or Walk",
+  ai_reasoning: "Attempting a 5 km run with current elevated heart rate increases injury risk by 45%."
+};
+
+export type RecoveryState = RecoveryData;
+export const INITIAL_RECOVERY_STATE = OPTIMAL_STATE;

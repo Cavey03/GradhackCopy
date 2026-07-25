@@ -51,6 +51,8 @@ interface BackendActivity {
   caloriesBurned?: number;
   rpe?: number; // seeded spelling
   perceivedExertion?: number; // app-written spelling
+  distanceKm?: number;
+  distance?: number;
 }
 
 interface BackendDashboard {
@@ -122,17 +124,27 @@ const title = (s: string) =>
 function adaptDashboard(d: BackendDashboard): RecoveryData {
   const p = d.prediction;
   const atRisk = p.setback_probability >= 0.4;
-  // The backend doesn't compute wearable-delta strings yet; borrow the
-  // matching mock template so the explainability card stays fully populated.
   const template = atRisk ? WARNING_STATE : OPTIMAL_STATE;
 
-  // ---- Real wearable stats from the member's readings (newest first) ----
   const readings = d.recentReadings ?? [];
   const activities = d.recentActivities ?? [];
   const num = (v: unknown): v is number => typeof v === 'number';
   const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
   const round1 = (x: number) => Math.round(x * 10) / 10;
 
+  // Process & format up to 7 most recent activities from DB
+  const recentActivities = activities.slice(0, 7).map((act) => {
+    const rawDate = act.sk ? act.sk.replace('ACTIVITY#', '') : '';
+    const formattedDate = rawDate.length >= 10 ? rawDate.slice(0, 10) : 'Recent';
+    return {
+      sk: act.sk,
+      name: act.workoutType ?? act.activityType ?? 'Workout',
+      calories: act.caloriesBurned ?? null,
+      avgHr: act.avgHeartRate ?? null,
+      date: formattedDate,
+      distanceKm: act.distanceKm ?? act.distance ?? null,
+    };
+  });
   const sleepNights = readings.map((r) => r.sleepHours).filter(num);
   const sleep = sleepNights.length
     ? { latestHours: sleepNights[0], avgHours: round1(avg(sleepNights)), nights: sleepNights.length }
@@ -170,6 +182,7 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
   const lastReadingDate = readings.length ? readings[0].sk.slice('READING#'.length, 'READING#'.length + 10) : undefined;
 
   return {
+    dataSource: 'LIVE_API',
     member: {
       memberId: d.member.memberId,
       firstName: d.member.firstName ?? template.member?.firstName,

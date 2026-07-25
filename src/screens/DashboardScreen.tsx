@@ -53,6 +53,44 @@ export default function DashboardScreen({ navigation, route }: any) {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
 
+<View style={styles.headerRow}>
+  <Text style={styles.headerTitle}>PulseGuard</Text>
+  
+  {/* DATA SOURCE INDICATOR BADGE */}
+  <View
+    style={[
+      styles.sourceBadge,
+      {
+        backgroundColor:
+          data.dataSource === 'LIVE_API' ? '#DCFCE7' : '#FEF3C7',
+        borderColor:
+          data.dataSource === 'LIVE_API' ? '#16A34A' : '#D97706',
+      },
+    ]}
+  >
+    <View
+      style={[
+        styles.dot,
+        {
+          backgroundColor:
+            data.dataSource === 'LIVE_API' ? '#16A34A' : '#D97706',
+        },
+      ]}
+    />
+    <Text
+      style={[
+        styles.sourceBadgeText,
+        {
+          color:
+            data.dataSource === 'LIVE_API' ? '#15803D' : '#B45309',
+        },
+      ]}
+    >
+      {data.dataSource === 'LIVE_API' ? 'LIVE DYNAMODB' : 'MOCK FALLBACK'}
+    </Text>
+  </View>
+</View>
+
     {/* TOP BRANDING & EXIT ROW */}
       <View style={styles.topHeaderRow}>
         <View style={styles.brandContainer}>
@@ -203,43 +241,79 @@ export default function DashboardScreen({ navigation, route }: any) {
       )}
 
       {/* 2. STRAIN VIEW */}
-      {activeCategory === 'Strain' && (
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <Zap size={18} color="#00A3E0" />
-            <Text style={[styles.cardTitle, { marginLeft: 6 }]}>CARDIO STRAIN & EXERTION</Text>
-          </View>
+{activeCategory === 'Strain' && (
+  <>
+    <View style={styles.card}>
+      <View style={styles.cardHeaderRow}>
+        <Zap size={18} color="#00A3E0" />
+        <Text style={[styles.cardTitle, { marginLeft: 6 }]}>CARDIO STRAIN & EXERTION</Text>
+      </View>
 
-          <View style={styles.metricRow}>
-            <View style={styles.metricBox}>
-              <Text style={styles.subText}>{data.strain ? 'Last Workout' : 'Target Strain'}</Text>
-              <Text style={styles.metricVal}>
-                {data.strain
-                  ? (data.strain.lastWorkoutMin != null ? `${data.strain.lastWorkoutMin} min` : data.strain.lastWorkoutType)
-                  : (isOptimal ? '12.5 - 14.0' : '5.0 - 7.5')}
-              </Text>
-            </View>
-            <View style={styles.dividerVertical} />
-            <View style={styles.metricBox}>
-              <Text style={styles.subText}>{data.strain ? 'Recent Load' : 'Current Strain'}</Text>
-              <Text style={[styles.metricVal, { color: isOptimal ? '#00A3E0' : '#DC2626' }]}>
-                {data.strain ? `${data.strain.load7dMin} min` : (isOptimal ? '8.2' : '14.1 (High)')}
-              </Text>
-            </View>
-          </View>
-
-          <Text style={styles.aiSummary}>
+      <View style={styles.metricRow}>
+        <View style={styles.metricBox}>
+          <Text style={styles.subText}>{data.strain ? 'Last Workout' : 'Target Strain'}</Text>
+          <Text style={styles.metricVal}>
             {data.strain
-              ? `Last workout: ${data.strain.lastWorkoutType}` +
-                (data.strain.lastAvgHr != null ? `, avg HR ${data.strain.lastAvgHr} bpm` : '') +
-                `. ${data.strain.load7dMin} min across ${data.strain.workouts} recent sessions` +
-                (data.strain.avgRpe != null ? `, average RPE ${data.strain.avgRpe}/10.` : '.')
-              : isOptimal
-              ? 'Your cardiovascular system is primed for moderate to high exertion workouts today.'
-              : 'Strain accumulator exceeded safe limits relative to suppressed autonomic recovery.'}
+              ? (data.strain.lastWorkoutMin != null ? `${data.strain.lastWorkoutMin} min` : data.strain.lastWorkoutType)
+              : (isOptimal ? '12.5 - 14.0' : '5.0 - 7.5')}
           </Text>
         </View>
+        <View style={styles.dividerVertical} />
+        <View style={styles.metricBox}>
+          <Text style={styles.subText}>{data.strain ? 'Recent Load' : 'Current Strain'}</Text>
+          <Text style={[styles.metricVal, { color: isOptimal ? '#00A3E0' : '#DC2626' }]}>
+            {data.strain ? `${data.strain.load7dMin} min` : (isOptimal ? '8.2' : '14.1 (High)')}
+          </Text>
+        </View>
+      </View>
+
+      <Text style={styles.aiSummary}>
+        {data.strain
+          ? `Last workout: ${data.strain.lastWorkoutType}` +
+            (data.strain.lastAvgHr != null ? `, avg HR ${data.strain.lastAvgHr} bpm` : '') +
+            `. ${data.strain.load7dMin} min across ${data.strain.workouts} recent sessions` +
+            (data.strain.avgRpe != null ? `, average RPE ${data.strain.avgRpe}/10.` : '.')
+          : isOptimal
+          ? 'Your cardiovascular system is primed for moderate to high exertion workouts today.'
+          : 'Strain accumulator exceeded safe limits relative to suppressed autonomic recovery.'}
+      </Text>
+    </View>
+
+    {/* RECENT 7 ACTIVITIES BLOCK */}
+    <View style={styles.card}>
+      <View style={styles.cardHeaderRow}>
+        <Activity size={18} color="#00A3E0" />
+        <Text style={[styles.cardTitle, { marginLeft: 6 }]}>RECENT ACTIVITIES (LAST 7)</Text>
+      </View>
+
+      {data.recentActivities && data.recentActivities.length > 0 ? (
+        <View style={styles.activityList}>
+          {data.recentActivities.slice(0, 7).map((act, index) => (
+            <View key={act.sk || index} style={styles.activityRow}>
+              <View style={styles.activityMain}>
+                <Text style={styles.activityName}>{act.name}</Text>
+                <Text style={styles.activityDate}>{act.date}</Text>
+              </View>
+              <View style={styles.activityMetrics}>
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{act.calories != null ? `${act.calories} kcal` : '— kcal'}</Text>
+                </View>
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{act.avgHr != null ? `${act.avgHr} bpm` : '— bpm'}</Text>
+                </View>
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{act.distanceKm != null ? `${act.distanceKm} km` : '— km'}</Text>
+                </View>
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.noActivityText}>No recent activities found for this user in database.</Text>
       )}
+    </View>
+  </>
+)}
 
       {/* 3. SLEEP VIEW */}
       {activeCategory === 'Sleep' && (
@@ -632,6 +706,47 @@ topHeaderRow: {
     fontSize: 13,
     marginLeft: 6,
   },
+sourceBadge: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  paddingHorizontal: 8,
+  paddingVertical: 4,
+  borderRadius: 12,
+  borderWidth: 1,
+},
+dot: {
+  width: 6,
+  height: 6,
+  borderRadius: 3,
+  marginRight: 6,
+},
+sourceBadgeText: {
+  fontSize: 10,
+  fontWeight: '800',
+  letterSpacing: 0.5,
+},
+  // Activity List Block Styles
+  activityList: { marginTop: 12 },
+  activityRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  activityMain: { flex: 1 },
+  activityName: { fontSize: 14, fontWeight: '700', color: '#002B49' },
+  activityDate: { fontSize: 11, fontWeight: '600', color: '#64748B', marginTop: 2 },
+  activityMetrics: { flexDirection: 'row', gap: 6 },
+  badge: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  badgeText: { fontSize: 11, fontWeight: '700', color: '#334155' },
+  noActivityText: { fontSize: 13, color: '#64748B', fontStyle: 'italic', marginTop: 12 },
   explainHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   explainTitle: { fontSize: 14, fontWeight: '800', color: '#002B49', marginLeft: 8 },
   explainBody: { marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#F1F5F9' },

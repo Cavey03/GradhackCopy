@@ -173,9 +173,12 @@ dynamodb = boto3.resource("dynamodb")
 members_table = dynamodb.Table(os.environ["MEMBERS_TABLE"])
 timeseries_table = dynamodb.Table(os.environ["TIMESERIES_TABLE"])
 
-# Member 4's SageMaker endpoint; empty = mock mode (see get_prediction)
+# Member 4's SageMaker endpoint; empty = mock mode (see get_prediction).
+# The models are hosted in eu-west-1 while this stack runs in eu-central-1,
+# so the runtime client takes an explicit region.
 SAGEMAKER_ENDPOINT = os.environ.get("SAGEMAKER_ENDPOINT", "")
-sagemaker_runtime = boto3.client("sagemaker-runtime")
+SAGEMAKER_REGION = os.environ.get("SAGEMAKER_REGION") or None
+sagemaker_runtime = boto3.client("sagemaker-runtime", region_name=SAGEMAKER_REGION)
 
 
 def _recent_history(member_id, limit=60):

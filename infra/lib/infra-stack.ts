@@ -112,7 +112,10 @@ export class InfraStack extends cdk.Stack {
         CONVERSATIONS_TABLE: this.conversationsTable.tableName,
         // Set to Member 4's endpoint name to switch from mock to real
         // predictions — no code change needed.
-        SAGEMAKER_ENDPOINT: '',
+        SAGEMAKER_ENDPOINT: 'recovery-combined-endpoint',
+        // The combined endpoint lives in eu-west-1 (that's where the custom
+        // inference image is); this stack runs in eu-central-1.
+        SAGEMAKER_REGION: 'eu-west-1',
       },
     });
 
@@ -120,10 +123,14 @@ export class InfraStack extends cdk.Stack {
     this.timeSeriesTable.grantReadWriteData(apiFn);
     this.conversationsTable.grantReadWriteData(apiFn);
 
-    // Allow synchronous inference against any endpoint in this account/region
+    // Allow synchronous inference against endpoints in this region and in
+    // eu-west-1 (where the model containers are hosted)
     apiFn.addToRolePolicy(new iam.PolicyStatement({
       actions: ['sagemaker:InvokeEndpoint'],
-      resources: [`arn:aws:sagemaker:${this.region}:${this.account}:endpoint/*`],
+      resources: [
+        `arn:aws:sagemaker:${this.region}:${this.account}:endpoint/*`,
+        `arn:aws:sagemaker:eu-west-1:${this.account}:endpoint/*`,
+      ],
     }));
 
     // Catch-all: any path other than /health goes to the API Lambda

@@ -4,7 +4,7 @@ frontend:
     preBuild:
       commands:
         - nvm use 22
-        - node -e "if (!process.env.EXPO_PUBLIC_API_URL) { console.error('Missing required Amplify environment variable: EXPO_PUBLIC_API_URL'); process.exit(1); }"
+        - 'if [ -z "$EXPO_PUBLIC_API_URL" ]; then echo "Missing required Amplify environment variable: EXPO_PUBLIC_API_URL"; exit 1; fi'
         - npm ci
     build:
       commands:

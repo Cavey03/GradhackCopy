@@ -1,5 +1,7 @@
 import json
 import os
+import time
+import traceback
 from datetime import datetime, timezone
 from decimal import Decimal
 import boto3
@@ -351,10 +353,7 @@ REAL_ROUTES = {
 }
 
 
-def lambda_handler(event, context):
-    method = event.get("httpMethod", "")
-    path = event.get("path", "")
-
+def _route(event, method, path):
     handler = REAL_ROUTES.get((method, path))
     if handler:
         return handler(event)
@@ -365,3 +364,32 @@ def lambda_handler(event, context):
         return _response(status, body)
 
     return _response(404, {"error": "not_found", "method": method, "path": path})
+
+
+def lambda_handler(event, context):
+    start = time.time()
+    method = event.get("httpMethod", "")
+    path = event.get("path", "")
+
+    try:
+        response = _route(event, method, path)
+    except Exception:
+        # Never leak a raw traceback to the app; log it, return a clean error
+        print(json.dumps({
+            "level": "ERROR",
+            "message": "unhandled_exception",
+            "method": method,
+            "path": path,
+            "traceback": traceback.format_exc(),
+        }))
+        response = _response(500, {"error": "internal_error"})
+
+    print(json.dumps({
+        "level": "INFO",
+        "method": method,
+        "path": path,
+        "status": response["statusCode"],
+        "durationMs": round((time.time() - start) * 1000, 1),
+        "requestId": getattr(context, "aws_request_id", None),
+    }))
+    return response

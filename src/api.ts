@@ -255,6 +255,10 @@ export interface CheckInDetails {
   soreness: number; // 1-5 (5 = severe)
   energy: number; // 1-5 (5 = energized)
   symptoms: string[];
+  // Optional. Only the demo simulator sets it, so a simulated check-in lands
+  // on the same date as its simulated wearable reading; the backend defaults
+  // to now when omitted.
+  timestamp?: string;
 }
 
 /**
@@ -264,18 +268,61 @@ export interface CheckInDetails {
 export async function submitCheckIn(
   memberId: string,
   details: CheckInDetails,
-): Promise<{ recorded: boolean }> {
+): Promise<{ recorded: boolean; prediction?: BackendPrediction; coach?: BackendDashboard['coach'] }> {
   try {
-    await request('POST', '/checkins', {
-      memberId,
-      pain: details.soreness,
-      fatigue: 6 - details.energy, // invert: UI collects energy, model wants fatigue
-      confidence: details.sleepQuality,
-      symptoms: details.symptoms,
-    });
-    return { recorded: true };
+    // The backend re-runs inference on every check-in and returns the fresh
+    // prediction; surfacing it is additive, existing callers can ignore it.
+    const res = await request<{ prediction?: BackendPrediction; coach?: BackendDashboard['coach'] }>(
+      'POST',
+      '/checkins',
+      {
+        memberId,
+        pain: details.soreness,
+        fatigue: 6 - details.energy, // invert: UI collects energy, model wants fatigue
+        confidence: details.sleepQuality,
+        symptoms: details.symptoms,
+        ...(details.timestamp ? { timestamp: details.timestamp } : {}),
+      },
+    );
+    return { recorded: true, prediction: res?.prediction, coach: res?.coach };
   } catch (error) {
     console.warn('⚠️ Check-in not persisted (API unreachable).', error);
+    return { recorded: false };
+  }
+}
+
+// ---------- Wearable telemetry (demo simulator) ----------
+
+/**
+ * One simulated wearable reading. Field names match what the backend writes
+ * to READING# items and what the inference script reads, so no mapping is
+ * needed anywhere in between. `hrvMs` is optional end-to-end.
+ */
+export interface WearableReading {
+  timestamp: string; // ISO8601; the backend uses it as the READING# sort key
+  restingHr: number;
+  hrBaseline: number;
+  vo2max: number;
+  sleepHours: number;
+  steps: number;
+  activeMinutes: number;
+  hrvMs?: number;
+}
+
+/**
+ * Persist a simulated wearable reading (READING# item). Never throws:
+ * returns { recorded: false } so a partial failure can be reported without
+ * blocking the rest of the demo step.
+ */
+export async function simulateWearable(
+  memberId: string,
+  reading: WearableReading,
+): Promise<{ recorded: boolean }> {
+  try {
+    await request('POST', '/wearables/simulate', { memberId, ...reading });
+    return { recorded: true };
+  } catch (error) {
+    console.warn('⚠️ Wearable reading not persisted (API unreachable).', error);
     return { recorded: false };
   }
 }

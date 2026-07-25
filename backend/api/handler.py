@@ -334,7 +334,12 @@ def handle_checkin(event):
     if not member_id:
         return _response(400, {"error": "memberId is required"})
 
-    ts = _now_iso()
+    # Optional explicit timestamp, mirroring /wearables/simulate. The demo
+    # simulator advances dates to build a trend, and inference.py keys
+    # sessions by date — without this the check-in lands on today while the
+    # simulated readings sit in the future, so its pain/fatigue never reach
+    # the newest session and the model appears not to react.
+    ts = body.get("timestamp") or _now_iso()
     item = {
         "memberId": member_id,
         "sk": f"CHECKIN#{ts}",
@@ -422,6 +427,12 @@ def handle_wearable_simulate(event):
                 "activeMinutes": r.get("activeMinutes"),
                 "createdAt": ts,
             }
+            # Optional, and only written when supplied. Uses the same field
+            # name the seed script and inference.py already read, so it feeds
+            # HRV ms / average_hrv_last_3 / hrv_trend_last_3 with no other
+            # changes. Callers that omit it are unaffected.
+            if r.get("hrvMs") is not None:
+                item["hrvMs"] = r["hrvMs"]
             batch.put_item(Item=_to_dynamo(item))
             written.append(item["sk"])
 

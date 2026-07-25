@@ -41,6 +41,16 @@ export default function DashboardScreen({ navigation, route }: any) {
     }
   }, [entityNumber]);
 
+  // Refetch whenever this screen regains focus, so returning from the
+  // Simulator shows the prediction produced by the simulated data instead of
+  // the stale copy this component still holds.
+  useEffect(
+    () => navigation.addListener('focus', () => {
+      fetchDashboardData(entityNumber).then(setData).catch(() => {});
+    }),
+    [navigation, entityNumber],
+  );
+
   const categories = [
     { id: 'Recovery', label: 'Recovery', color: '#E11082', Icon: Activity },
     { id: 'Strain', label: 'Strain', color: '#00A3E0', Icon: Zap },

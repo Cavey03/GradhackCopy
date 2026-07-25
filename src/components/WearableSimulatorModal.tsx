@@ -53,8 +53,11 @@ const SCENARIOS: Record<ScenarioKey, { label: string; blurb: string; color: stri
     delta: { restingHr: +3, hrvMs: -5, sleepHours: -0.6, vo2max: -0.2, steps: -900, activeMinutes: -6, pain: +1, fatigue: +1 },
   },
   setback: {
+    // pain +5 takes a step-1 setback to 7, which is where the model flips to
+    // REDUCE. At +4 it lands on 6 and stays MAINTAIN, so a single click would
+    // move only the risk number and the demo would fall flat.
     label: 'Setback', blurb: 'Acute regression', color: '#DC2626',
-    delta: { restingHr: +8, hrvMs: -12, sleepHours: -1.5, vo2max: -0.5, steps: -2500, activeMinutes: -15, pain: +4, fatigue: +4 },
+    delta: { restingHr: +8, hrvMs: -12, sleepHours: -1.5, vo2max: -0.5, steps: -2500, activeMinutes: -15, pain: +5, fatigue: +5 },
   },
 };
 
@@ -137,9 +140,13 @@ export default function WearableSimulatorModal({ visible, onClose, memberId, bas
     const wearable = await simulateWearable(memberId, reading);
     // Same timestamp as the reading: inference.py keys sessions by date, so
     // both must land on the same simulated day to be seen as one session.
+    // submitCheckIn takes a 1-5 energy value and sends fatigue = 6 - energy,
+    // so invert here. Clamp to 1..5 — the metric bounds are 0..10 and using
+    // them here would let energy go negative and silently distort fatigue.
+    const energy = Math.min(5, Math.max(1, 6 - current.fatigue));
     const checkin = await submitCheckIn(memberId, {
       soreness: current.pain,
-      energy: clamp('fatigue', 6 - current.fatigue),
+      energy,
       sleepQuality: 3,
       symptoms: scenario === 'setback' ? ['fatigue'] : [],
       timestamp: stamp,

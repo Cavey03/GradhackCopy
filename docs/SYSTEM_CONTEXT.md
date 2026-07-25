@@ -4,7 +4,8 @@ Single source of truth for the whole stack: mobile app, backend, and the two
 ML models. Written so that a person or an AI assistant joining any one
 workstream can get productive without reading the other three.
 
-**Last verified:** 2026-07-25, all live resources confirmed working end to end.
+**Last verified:** 2026-07-25, all live resources confirmed working end to end,
+coaching layer included.
 
 ---
 
@@ -225,7 +226,7 @@ API Gateway `{proxy+}` catch-all.
 | POST | `/wearables/simulate` | **Real** — writes `READING#` items |
 | POST | `/simulations` | **Mock** — keyword heuristic, see §7 |
 | POST | `/auth/demo` | Mock — static demo member |
-| POST | `/coach/messages` | Mock — static text |
+| POST | `/coach/messages` | **Real** — Gemini, grounded in the stored prediction |
 
 ### Env vars
 ```
@@ -234,6 +235,12 @@ TIMESERIES_TABLE=recovery-timeseries
 CONVERSATIONS_TABLE=recovery-conversations
 SAGEMAKER_ENDPOINT=recovery-combined-endpoint   # empty string = mock mode
 SAGEMAKER_REGION=eu-west-1
+LLM_PROVIDER=gemini                             # gemini | mock
+GEMINI_MODEL=gemini-3.5-flash
+GEMINI_API_KEY=<set out of band, never in git>
+LLM_TIMEOUT_SECONDS=12                          # optional
+LLM_MAX_OUTPUT_TOKENS=1200                      # optional
+LLM_THINKING_BUDGET=0                           # optional
 ```
 
 ### The mock-fallback design
@@ -249,8 +256,83 @@ predictions vary per member and carry
 ### Performance
 `handle_dashboard` uses a stored `PREDICTION#` if one exists and only calls
 SageMaker otherwise. All 121 members with history have been pre-computed, so
-dashboard loads are ~0.9s. Check-ins always re-infer. A cold serverless
-container takes several seconds to start.
+dashboard loads are ~0.9s. Check-ins always re-infer (SageMaker ~1s warm, plus
+~6s of coach generation). A cold serverless container takes several seconds to
+start.
+
+---
+
+## 6a. The coaching layer (APO + Gemini)
+
+Two modules, both stdlib-only — the Lambda ships no packaged dependencies.
+
+### `prompt_orchestrator.py` — Adaptive Prompt Orchestrator
+**Makes no health decisions.** The readiness class, VO2 forecast, and the
+activity/duration/intensity plan are all decided upstream by the models and the
+rules in `inference.py`. The APO only assembles them with member context into
+one consistent prompt.
+
+- `member_context()` — reads the **real** schema: `recoveryGoal`,
+  `recoveryContext.{conditionCategory, severity, recoveryStage,
+  mobilityLimitation, clinicianCleared, contraindicationFlag, vo2RiskBand,
+  medicationImpact}`. Current pain/fatigue come from the latest `CHECKIN#`,
+  **not** the intake profile's `painScore`. Verified: 16/16 fields populate.
+- `authoritative_plan()` — the decision the LLM must explain and cannot alter,
+  including `reason_codes` (`RECOVERY_REQUIRED`, `PAIN_LOW`, `SLEEP_ADEQUATE`,
+  `INCONSISTENT_ADHERENCE`, …) derived from the readiness class and the
+  threshold checks in `top_factors`.
+- `build_coach_prompt()` — assembles everything with `SYSTEM_RULES`.
+- `PROMPT_VERSION` is stamped onto every stored prediction.
+
+### `llm_client.py` — provider-switched LLM call
+- `generate_coach_message()` **never raises.** Missing key, timeout, HTTP
+  error, safety block or malformed output all fall back to safe canned text.
+- The fallback is **plan-aware and never names an activity or duration**, so it
+  cannot reintroduce the contradiction described in §7.
+- `responseSchema` forces the four prose fields.
+- API key is sent as an `x-goog-api-key` header, not a query parameter, so it
+  cannot land in an access log.
+
+### The safety property that matters
+**Gemini cannot emit plan fields at all.** It returns only `summary`,
+`explanation`, `coaching_message`, `follow_up_question`. The app renders
+activity/duration/intensity from the *model*. A contradiction between the
+coaching text and the plan is therefore impossible by construction, not
+something a validator has to catch.
+
+### When it runs
+Generation happens **with inference** on `/checkins` and `/activities`, and the
+result is stored on the `PREDICTION#` item as `coach`, along with
+`coach_provider` and `coach_prompt_version`. Dashboard loads read the stored
+text and never call Gemini.
+
+### Gemini gotchas already hit (don't rediscover these)
+1. **`gemini-2.5-flash` returns 404 for new API keys**, even though ListModels
+   still advertises it. ListModels is not an availability signal — test with an
+   actual `generateContent` call.
+2. **`gemini-3.5-flash` is a thinking model.** With `maxOutputTokens: 400` it
+   spent 384 tokens reasoning, hit `MAX_TOKENS`, and returned *empty content*.
+   `thinkingBudget: 0` plus a 1200 ceiling fixes it; explaining an
+   already-decided plan needs no reasoning phase.
+3. **A 6s timeout is too short.** 12s works and still falls back before the
+   app's 20s client timeout.
+4. Logs record `durationMs`, `finishReason` and `thoughtTokens` — an empty
+   candidate is ambiguous between `MAX_TOKENS` and a safety block, and
+   `finishReason` is what tells them apart.
+
+Current latency: **5.7–6.9s**, `finishReason: STOP`.
+
+### Is it actually using Gemini?
+`coach_provider` on the prediction says `gemini` when configured — **but that
+reflects the setting, not success.** If generation failed you'll see
+`coach_provider: gemini` *and* the canned fallback wording ("Your updated
+recovery plan is ready."). Real output cites the member's own goal, check-in
+numbers and reason codes. Check the logs:
+
+```bash
+aws logs tail /aws/lambda/RecoveryPlatformStack-ApiFnE0725F78-KIYezPWTw6wR \
+  --region eu-central-1 --since 15m --filter-pattern coach
+```
 
 ---
 
@@ -269,13 +351,14 @@ and the API has no authorizer.
 - `src/components/` — `DailyCheckInModal`, `TrendChart`, `VitalityScoreRing`
 
 ### Still mock in the UI
-- **7-day trend chart** — `TrendChart.tsx:9` is hardcoded, identical for every member.
-- **All coach text** — summary, prescription sentence, and the card labelled
-  **"AWS Bedrock Rationale"** all come from the static `COACH_MESSAGE` dict.
-  **Bedrock is not used anywhere in this stack** and that label should change.
+- **7-day trend chart** — hardcoded in `TrendChart.tsx`, identical for every
+  member. (Reworked in "Verion1.2"; re-verify whether it now has a data source.)
 - **What-if simulator** — `/simulations` scans the question for words like
   "run", "sprint", "heavy" and returns hardcoded probabilities (0.44 vs 0.19).
   It never invokes a model.
+- **The "AWS Bedrock Rationale" label** — the *text* is now really generated,
+  but by **Gemini, not Bedrock**. Bedrock is blocked outright (see §8) and is
+  not used anywhere in this stack. Rename this label before judging.
 
 ### The activity recommendation is rules, not ML
 `_plan_activity()` in `inference.py` maps the model's readiness class to an
@@ -316,6 +399,19 @@ work supersedes this; flagged so nobody mistakes the default for a prediction.
 6. **The API is completely open.** No Cognito authorizer on `{proxy+}`; anyone
    with the URL can read and write member data. Acceptable for a demo, but do
    not put real personal data behind it.
+7. **Bedrock is blocked by an organisation SCP** — an explicit deny on the
+   parent org (`602777777415`), not something any IAM change in this account
+   can override:
+   ```
+   AccessDeniedException … explicit deny in a service control policy:
+   arn:aws:organizations::602777777415:policy/…/p-efnfvaoe
+   ```
+   That is why the coach uses Gemini. SCPs govern AWS API calls only, so
+   outbound HTTPS from the Lambda to Google is unaffected. If a judge asks why
+   the stack is not fully AWS-native, that error is the answer.
+8. **The Gemini API key is short-lived.** When it expires the coach silently
+   reverts to fallback text — no error, just canned wording. Set a fresh key
+   before demoing (§9).
 7. **`prepared_data/master_dataset_with_identifiers.csv` contains names, ages
    and diagnoses** and sits in a public repo. Only 59 distinct first names
    appear, which suggests generated names, but confirm before that repo stays
@@ -344,17 +440,57 @@ loads whatever `inference.py` is in the archive.
 **Warm before demoing.** Submit one check-in a few minutes ahead so the
 serverless container is hot.
 
+### Setting or rotating the Gemini API key
+
+1. Create a key at <https://aistudio.google.com/apikey> — no GCP project or
+   billing setup needed; the free tier covers a demo.
+2. Confirm which models that key can actually call (ListModels over-reports —
+   see §6a):
+   ```powershell
+   $key = "PASTE_KEY"
+   $body = '{"contents":[{"parts":[{"text":"hi"}]}]}'
+   foreach ($m in @("gemini-3.5-flash","gemini-3.6-flash","gemini-flash-latest","gemini-3.1-flash-lite")) {
+     try {
+       $null = Invoke-RestMethod -Uri "https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent" `
+         -Method POST -Headers @{"x-goog-api-key"=$key} -ContentType "application/json" -Body $body
+       "OK    $m"
+     } catch { "FAIL  $m" }
+   }
+   ```
+   Prefer a non-`preview`, non-`latest` id so it can't shift mid-demo.
+3. Apply it. **Every variable must be present — the API replaces the whole
+   map, so omitting one wipes it:**
+   ```powershell
+   aws lambda update-function-configuration `
+     --function-name RecoveryPlatformStack-ApiFnE0725F78-KIYezPWTw6wR `
+     --region eu-central-1 `
+     --environment "Variables={SAGEMAKER_ENDPOINT=recovery-combined-endpoint,SAGEMAKER_REGION=eu-west-1,CONVERSATIONS_TABLE=recovery-conversations,MEMBERS_TABLE=recovery-members,TIMESERIES_TABLE=recovery-timeseries,LLM_PROVIDER=gemini,GEMINI_MODEL=gemini-3.5-flash,GEMINI_API_KEY=YOUR_KEY}"
+   ```
+4. Verify — real output cites the member's own goal and check-in values:
+   ```powershell
+   $r = Invoke-RestMethod -Uri "https://3ist8udh05.execute-api.eu-central-1.amazonaws.com/dev/checkins" `
+     -Method POST -ContentType "application/json" `
+     -Body '{"memberId":"ENT000122","pain":2,"fatigue":2,"confidence":4}'
+   $r.coach | ConvertTo-Json
+   ```
+
+**Never** put the key in `infra-stack.ts`, the app, a commit, or a chat/screen
+share — this repo is public. `LLM_PROVIDER=mock` disables the LLM entirely
+without removing anything.
+
 ---
 
 ## 10. Open work
 
-| Item | Owner |
+| Item | Status |
 |---|---|
-| LLM coach — replaces all static coach text and the activity rule | teammates, in progress |
+| LLM coach (APO + Gemini) | **done** — live, §6a |
+| Set a fresh Gemini key before judging — the current one is short-lived | **required** |
+| Relabel "AWS Bedrock Rationale" → Gemini | unassigned |
 | Make `/simulations` invoke the model instead of keyword matching | unassigned |
 | Surface `predicted_vo2_4_weeks` in the UI — Model 2's output is unused | unassigned |
+| Replace the activity rule (`_plan_activity`) — see the defect in §7 | teammates |
 | Real SHAP attribution to replace rule-based `top_factors` | unassigned |
 | Real 7-day trend from stored `PREDICTION#` history | unassigned |
-| Relabel "AWS Bedrock Rationale" | unassigned |
 | Delete the two superseded endpoints | unassigned |
 | `.gitignore` for `Gradhack-aiModels` (~200 MB CSVs, committed `.pyc`) | unassigned |

@@ -7,6 +7,9 @@ from decimal import Decimal
 import boto3
 from boto3.dynamodb.conditions import Key
 
+import llm_client
+import prompt_orchestrator
+
 
 def _json_default(o):
     if isinstance(o, Decimal):
@@ -50,6 +53,9 @@ def handle_dashboard(event):
 
     latest_checkin = _latest_item(member_id, "CHECKIN")
     latest_prediction = _latest_item(member_id, "PREDICTION")
+    # Stored prediction if one exists; otherwise infer now (mock until
+    # SAGEMAKER_ENDPOINT is configured)
+    prediction = latest_prediction or get_prediction(member_id)
 
     # Newest wearable readings (sleep, HR, VO2) so the app can show real data
     readings = timeseries_table.query(
@@ -81,12 +87,13 @@ def handle_dashboard(event):
         "recentReadings": readings,
         "recentActivities": activities,
         "oldestReading": oldest[0] if oldest else None,
-        # Stored prediction if one exists; otherwise infer now (mock until
-        # SAGEMAKER_ENDPOINT is configured)
-        "prediction": latest_prediction or get_prediction(member_id),
+        "prediction": prediction,
         "todaysPlan": DASHBOARD["todaysPlan"],   # still mock; becomes real with the Plan entity
         "weekPlan": DASHBOARD["weekPlan"],
-        "coach": DASHBOARD["coach"],
+        # Coach text is generated alongside the prediction and stored with it,
+        # so a dashboard load never calls the LLM. Falls back to the static
+        # message for predictions written before the coach layer existed.
+        "coach": prediction.get("coach") or COACH_MESSAGE,
     })
 
 
@@ -192,7 +199,28 @@ def _recent_history(member_id, limit=60):
     return [i for i in resp.get("Items", []) if not i["sk"].startswith("PREDICTION#")]
 
 
-def get_prediction(member_id):
+def _latest_checkin_for_prompt(history):
+    """Newest CHECKIN# item out of the already-loaded history, or None."""
+    for item in history or []:
+        if str(item.get("sk", "")).startswith("CHECKIN#"):
+            return item
+    return None
+
+
+def _generate_coach(member, prediction, history, question=None):
+    """Build the APO prompt and generate the coaching prose."""
+    plan = prompt_orchestrator.authoritative_plan(prediction)
+    prompt = prompt_orchestrator.build_coach_prompt(
+        member=member,
+        prediction=prediction,
+        history=history,
+        latest_checkin=_latest_checkin_for_prompt(history),
+        question=question,
+    )
+    return llm_client.generate_coach_message(prompt, plan)
+
+
+def get_prediction(member_id, question=None):
     """Readiness/VO2 prediction for a member (contract: plan section 10.1).
 
     When SAGEMAKER_ENDPOINT is set, synchronously invokes Member 4's endpoint
@@ -205,10 +233,11 @@ def get_prediction(member_id):
         return MODEL_PREDICTION
     try:
         member = members_table.get_item(Key={"memberId": member_id}).get("Item") or {}
+        history = _recent_history(member_id)
         payload = json.dumps({
             "memberId": member_id,
             "member": member,
-            "history": _recent_history(member_id),
+            "history": history,
         }, default=_json_default)
         resp = sagemaker_runtime.invoke_endpoint(
             EndpointName=SAGEMAKER_ENDPOINT,
@@ -217,6 +246,13 @@ def get_prediction(member_id):
             Body=payload,
         )
         prediction = json.loads(resp["Body"].read())
+
+        # The coach layer explains the prediction; it never changes it, and it
+        # can never fail the request (generate_coach_message never raises).
+        prediction["coach"] = _generate_coach(member, prediction, history, question)
+        prediction["coach_provider"] = os.environ.get("LLM_PROVIDER", "mock")
+        prediction["coach_prompt_version"] = prompt_orchestrator.PROMPT_VERSION
+
         ts = _now_iso()
         timeseries_table.put_item(Item=_to_dynamo({
             "memberId": member_id,
@@ -307,10 +343,12 @@ def handle_checkin(event):
     timeseries_table.put_item(Item=_to_dynamo(item))
 
     # Fresh inference after new data (mock until SAGEMAKER_ENDPOINT is configured)
+    prediction = get_prediction(member_id)
     return _response(201, {
         "status": "recorded",
         "checkinSk": item["sk"],
-        "prediction": get_prediction(member_id),
+        "prediction": prediction,
+        "coach": prediction.get("coach") or COACH_MESSAGE,
     })
 
 
@@ -337,10 +375,12 @@ def handle_activity(event):
     }
     timeseries_table.put_item(Item=_to_dynamo(item))
 
+    prediction = get_prediction(member_id)
     return _response(201, {
         "status": "recorded",
         "activitySk": item["sk"],
-        "prediction": get_prediction(member_id),
+        "prediction": prediction,
+        "coach": prediction.get("coach") or COACH_MESSAGE,
     })
 
 
@@ -380,6 +420,32 @@ def handle_wearable_simulate(event):
             written.append(item["sk"])
 
     return _response(201, {"status": "inserted", "count": len(written), "sks": written})
+
+
+def handle_coach_message(event):
+    """Answer a member's question, grounded in their stored prediction.
+
+    The plan is never recomputed here and the LLM cannot change it — the
+    member's question only steers the wording of the explanation.
+    """
+    body = _parse_body(event)
+    if body is None:
+        return _response(400, {"error": "invalid_json"})
+
+    member_id = body.get("memberId")
+    if not member_id:
+        return _response(400, {"error": "memberId is required"})
+
+    question = body.get("message") or body.get("question")
+
+    member = members_table.get_item(Key={"memberId": member_id}).get("Item") or {}
+    prediction = _latest_item(member_id, "PREDICTION")
+    if not prediction:
+        prediction = get_prediction(member_id, question=question)
+        return _response(200, prediction.get("coach") or COACH_MESSAGE)
+
+    history = _recent_history(member_id)
+    return _response(200, _generate_coach(member, prediction, history, question))
 
 
 def handle_simulation(event):
@@ -431,7 +497,6 @@ def handle_simulation(event):
 MOCK_ROUTES = {
     ("POST", "/auth/demo"): (200, DEMO_MEMBER),
     ("POST", "/recovery/infer"): (200, MODEL_PREDICTION),
-    ("POST", "/coach/messages"): (200, COACH_MESSAGE),
 }
 
 REAL_ROUTES = {
@@ -440,6 +505,7 @@ REAL_ROUTES = {
     ("POST", "/activities"): handle_activity,
     ("POST", "/wearables/simulate"): handle_wearable_simulate,
     ("POST", "/simulations"): handle_simulation,
+    ("POST", "/coach/messages"): handle_coach_message,
     ("GET", "/dashboard"): handle_dashboard,
 }
 

@@ -116,6 +116,13 @@ export class InfraStack extends cdk.Stack {
         // The combined endpoint lives in eu-west-1 (that's where the custom
         // inference image is); this stack runs in eu-central-1.
         SAGEMAKER_REGION: 'eu-west-1',
+        // Coaching LLM: 'gemini' or 'mock'. GEMINI_API_KEY is deliberately NOT
+        // set here — this file is public. Set the key and switch the provider
+        // out of band:
+        //   aws lambda update-function-configuration --function-name <ApiFn> \
+        //     --environment "Variables={...,LLM_PROVIDER=gemini,GEMINI_API_KEY=...}"
+        LLM_PROVIDER: 'mock',
+        GEMINI_MODEL: 'gemini-flash-latest',
       },
     });
 

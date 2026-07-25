@@ -344,6 +344,10 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
     heart,
     strain,
     lastReadingDate,
+    vo2BaselineDate: d.oldestReading?.sk?.slice('READING#'.length, 'READING#'.length + 10),
+    vo2CurrentDate: readings.find((r) => num(r.vo2MaxEstimate ?? r.vo2max))
+      ?.sk?.slice('READING#'.length, 'READING#'.length + 10),
+    vo2ReadingCount: vo2s.length,
     recovery_score: p.recovery_score,
     readiness_score: p.readiness_score,
     recovery_stage: p.recovery_stage,

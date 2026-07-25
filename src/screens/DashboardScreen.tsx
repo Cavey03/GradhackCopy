@@ -72,6 +72,12 @@ export default function DashboardScreen({ navigation, route }: any) {
   const isOptimal = data.setback_probability < 0.4;
   const m = data.member;
 
+  // 36% of members have a single VO2 reading, which makes baseline and current
+  // the same number — a comparison there reads as broken rather than flat.
+  const hasVo2Comparison =
+    (data.vo2ReadingCount ?? 0) >= 2 && data.vo2BaselineDate !== data.vo2CurrentDate;
+  const vo2Delta = Math.round((data.vo2_max_current - data.vo2_max_baseline) * 10) / 10;
+
   // If Login didn't pass data (e.g. deep link during dev), fetch it live
   useEffect(() => {
     if (!route?.params?.initialData) {
@@ -276,19 +282,77 @@ export default function DashboardScreen({ navigation, route }: any) {
               <TrendChart isOptimal={isOptimal} />
               <View style={styles.divider} />
 
-              <View style={styles.metricRow}>
-                <View style={styles.metricBox}>
-                  <Text style={styles.subText}>Baseline VO₂ Max</Text>
-                  <Text style={styles.metricVal}>{data.vo2_max_baseline}</Text>
+              {/* VO2 is measured history, not the 7-day line above it, and the
+                  two readings can be months apart — so it is labelled with its
+                  own dates rather than inheriting "7 Days Ago -> Today". */}
+              {hasVo2Comparison ? (
+                <>
+                  <View style={styles.metricRow}>
+                    <View style={styles.metricBox}>
+                      <Text style={styles.subText}>Baseline VO₂ Max</Text>
+                      <Text style={styles.metricVal}>{data.vo2_max_baseline}</Text>
+                      {!!data.vo2BaselineDate && (
+                        <Text style={styles.metricDate}>{data.vo2BaselineDate}</Text>
+                      )}
+                    </View>
+                    <View style={styles.dividerVertical} />
+                    <View style={styles.metricBox}>
+                      <Text style={styles.subText}>Latest Measured</Text>
+                      <Text style={[styles.metricVal, { color: isOptimal ? '#002B49' : '#E11082' }]}>
+                        {data.vo2_max_current}
+                      </Text>
+                      {!!data.vo2CurrentDate && (
+                        <Text style={styles.metricDate}>{data.vo2CurrentDate}</Text>
+                      )}
+                    </View>
+                  </View>
+                  <Text style={styles.metricNote}>
+                    {vo2Delta === 0
+                      ? 'No change between these two readings.'
+                      : `${vo2Delta > 0 ? '+' : ''}${vo2Delta.toFixed(1)} mL/kg/min between these readings${
+                          data.vo2ReadingCount ? ` · ${data.vo2ReadingCount} readings on file` : ''
+                        }`}
+                  </Text>
+                </>
+              ) : (
+                <View style={styles.metricRow}>
+                  <View style={styles.metricBox}>
+                    <Text style={styles.subText}>VO₂ Max (single reading)</Text>
+                    <Text style={styles.metricVal}>{data.vo2_max_current}</Text>
+                    {!!data.vo2CurrentDate && (
+                      <Text style={styles.metricDate}>{data.vo2CurrentDate}</Text>
+                    )}
+                    <Text style={styles.metricNote}>
+                      Only one VO₂ reading is on file, so there is no baseline to compare against.
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.dividerVertical} />
-                <View style={styles.metricBox}>
-                  <Text style={styles.subText}>Current Estimated</Text>
-                  <Text style={[styles.metricVal, { color: isOptimal ? '#002B49' : '#E11082' }]}>
-                    {data.vo2_max_current}
+              )}
+
+              {/* The model's actual contribution, kept separate from measured
+                  history because only this line is a prediction. */}
+              {data.vo2_forecast_4_weeks != null && (
+                <View style={styles.forecastBox}>
+                  <Text style={styles.forecastLabel}>MODEL FORECAST · 4 SESSIONS AHEAD</Text>
+                  <View style={styles.forecastRow}>
+                    <Text style={styles.forecastValue}>{data.vo2_forecast_4_weeks}</Text>
+                    {data.vo2_predicted_change != null && (
+                      <Text
+                        style={[
+                          styles.forecastChange,
+                          { marginLeft: 10, color: data.vo2_predicted_change >= 0 ? '#10B981' : '#DC2626' },
+                        ]}
+                      >
+                        {data.vo2_predicted_change >= 0 ? '+' : ''}
+                        {data.vo2_predicted_change} mL/kg/min
+                      </Text>
+                    )}
+                  </View>
+                  <Text style={styles.forecastDisclaimer}>
+                    Forecast only — not an achieved measurement.
                   </Text>
                 </View>
-              </View>
+              )}
             </View>
           </>
         )}
@@ -862,6 +926,11 @@ const styles = StyleSheet.create({
   planTitle: { fontSize: 22, fontWeight: '900', color: '#FFFFFF', marginTop: 8, letterSpacing: -0.5 },
   planSub: { fontSize: 13, fontWeight: '700', color: '#E11082', marginTop: 4 },
   coachingMsg: { fontSize: 14, fontStyle: 'italic', color: '#E2E8F0', marginTop: 12, lineHeight: 20 },
+
+  // --- vo2 provenance (forecast styles already existed, unused, above) ---
+  metricDate: { fontSize: 10, color: '#94A3B8', fontWeight: '600', marginTop: 2 },
+  metricNote: { fontSize: 11, color: '#64748B', marginTop: 10, textAlign: 'center', lineHeight: 16 },
+  forecastRow: { flexDirection: 'row', alignItems: 'baseline', marginTop: 5 },
 
   // --- profile ---
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 10 },

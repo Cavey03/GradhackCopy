@@ -172,6 +172,14 @@ export interface RecoveryData {
     avgRpe: number | null;
   };
   lastReadingDate?: string;
+  // VO2 provenance. The baseline and current figures come from the member's
+  // oldest and newest stored readings, which can be months apart — the dates
+  // are carried so the UI can say so instead of implying a 7-day window.
+  vo2BaselineDate?: string;
+  vo2CurrentDate?: string;
+  // How many readings actually carry a VO2 value. At 1 the baseline and the
+  // current figure are the same reading, so comparing them is meaningless.
+  vo2ReadingCount?: number;
 }
 
 export const OPTIMAL_STATE: RecoveryData = {

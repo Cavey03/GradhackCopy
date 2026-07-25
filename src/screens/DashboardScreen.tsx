@@ -1,7 +1,7 @@
 // src/screens/DashboardScreen.tsx
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
-import { OPTIMAL_STATE, WARNING_STATE, RecoveryData } from '../mockData';
+import { OPTIMAL_STATE, RecoveryData } from '../mockData';
 import { fetchDashboardData, submitCheckIn, submitExerciseLog, generatePlan } from '../api';
 import { 
   ShieldCheck, 
@@ -264,22 +264,26 @@ export default function DashboardScreen({ navigation, route }: any) {
               <View style={styles.cardHeaderRow}>
                 <View style={[styles.statusChip, { backgroundColor: isOptimal ? '#E11082' : '#DC2626', marginBottom: 8 }]}>
                   <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '800' }}>
-                    {isOptimal ? 'OPTIMAL RECOVERY' : 'SETBACK RISK ALERT'}
+                    NEXT SESSION RECOMMENDATION
                   </Text>
                 </View>
               </View>
 
-              <VitalityScoreRing score={data.recovery_score} isOptimal={isOptimal} />
+              <VitalityScoreRing
+                score={data.recovery_score}
+                label={data.recovery_label}
+                isOptimal={isOptimal}
+              />
               <Text style={styles.aiSummary}>{data.ai_summary}</Text>
             </View>
 
             <View style={styles.card}>
               <View style={styles.cardHeaderRow}>
                 <Activity size={16} color="#002B49" />
-                <Text style={[styles.cardTitle, { marginLeft: 6 }]}>7-DAY RECOVERY TREND</Text>
+                <Text style={[styles.cardTitle, { marginLeft: 6 }]}>7-DAY VO₂ MAX TREND</Text>
               </View>
 
-              <TrendChart isOptimal={isOptimal} />
+              <TrendChart isOptimal={isOptimal} history={data.vo2_trend} />
               <View style={styles.divider} />
 
               {/* VO2 is measured history, not the 7-day line above it, and the

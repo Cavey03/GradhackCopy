@@ -506,24 +506,30 @@ def handle_activity(event):
         return _response(400, {"error": "memberId is required"})
 
     ts = _now_iso()
+    duration = body.get("durationMinutes", body.get("durationMin"))
+    distance = body.get("distanceKm", body.get("distance"))
+    avg_heart_rate = body.get("avgHeartRate", body.get("avgHr"))
+    max_heart_rate = body.get("maxHeartRate", body.get("maxHr"))
+    workout_type = body.get("workoutType", body.get("activityType"))
     item = {
         "memberId": member_id,
         "sk": f"ACTIVITY#{ts}",
         "type": "ACTIVITY",
         "activityType": body.get("activityType"),      # walk | run | swim
-        "durationMinutes": body.get("durationMinutes"),
+        "workoutType": workout_type,
+        "durationMin": duration,
+        "durationMinutes": duration,
+        "distanceKm": distance,
+        "distance": distance,
+        "avgHeartRate": avg_heart_rate,
+        "maxHeartRate": max_heart_rate,
+        "caloriesBurned": body.get("caloriesBurned"),
         "intensity": body.get("intensity"),             # very_low | low | moderate
         "perceivedExertion": body.get("perceivedExertion"),  # e.g. 1-10 (RPE)
+        "rpe": body.get("rpe", body.get("perceivedExertion")),
         "completed": body.get("completed", True),
         "createdAt": ts,
     }
-    # Optional detail the Log Exercise drawer collects. Written only when
-    # supplied, under the same field names the dashboard already reads back for
-    # seeded activities, so the Strain view shows what the member entered
-    # instead of blanks.
-    for field in ("distanceKm", "avgHeartRate", "maxHeartRate", "caloriesBurned"):
-        if body.get(field) is not None:
-            item[field] = body[field]
     timeseries_table.put_item(Item=_to_dynamo(item))
 
     prediction = get_prediction(member_id)

@@ -52,6 +52,8 @@ const TIMEOUT_MS = 25000;
 
 interface BackendPrediction {
   recovery_score: number;
+  readiness?: 'REDUCE' | 'MAINTAIN' | 'PROGRESS';
+  probabilities?: Partial<Record<'REDUCE' | 'MAINTAIN' | 'PROGRESS', number>>;
   readiness_score: number;
   recovery_stage: number;
   recovery_trend: string; // "improving" | "stable" | "declining"
@@ -231,8 +233,28 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
 const title = (s: string) =>
   (s || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
+const topReadinessClass = (p: BackendPrediction) => {
+  const entries = Object.entries(p.probabilities ?? {})
+    .filter((entry): entry is ['REDUCE' | 'MAINTAIN' | 'PROGRESS', number] => typeof entry[1] === 'number')
+    .sort((a, b) => b[1] - a[1]);
+
+  if (!entries.length) {
+    return {
+      label: p.readiness,
+      score: p.recovery_score,
+    };
+  }
+
+  const [label, probability] = entries[0];
+  return {
+    label,
+    score: Math.round(probability * 100),
+  };
+};
+
 function adaptDashboard(d: BackendDashboard): RecoveryData {
   const p = d.prediction;
+  const readinessClass = topReadinessClass(p);
   const atRisk = p.setback_probability >= 0.4;
   const template = atRisk ? WARNING_STATE : OPTIMAL_STATE;
 
@@ -286,6 +308,11 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
     : undefined;
 
   const vo2s = readings.map((r) => r.vo2MaxEstimate ?? r.vo2max).filter(num);
+  const vo2Trend = readings
+    .slice()
+    .reverse()
+    .map((r) => r.vo2MaxEstimate ?? r.vo2max)
+    .filter(num);
   const vo2Current = vo2s.length ? vo2s[0] : d.member.vo2max?.current;
   const oldestVo2 = d.oldestReading ? (d.oldestReading.vo2MaxEstimate ?? d.oldestReading.vo2max) : undefined;
   const vo2Baseline = num(oldestVo2) ? oldestVo2 : d.member.vo2max?.baseline;
@@ -348,7 +375,11 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
     vo2CurrentDate: readings.find((r) => num(r.vo2MaxEstimate ?? r.vo2max))
       ?.sk?.slice('READING#'.length, 'READING#'.length + 10),
     vo2ReadingCount: vo2s.length,
-    recovery_score: p.recovery_score,
+    // The ring now shows the top class probability rather than the
+    // hand-weighted blend, so "53% MAINTAIN" is a number the model actually
+    // produced instead of one assembled from three of them.
+    recovery_score: readinessClass.score,
+    recovery_label: readinessClass.label,
     readiness_score: p.readiness_score,
     recovery_stage: p.recovery_stage,
     recovery_trend: title(p.recovery_trend),
@@ -358,6 +389,7 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
     intensity: title(p.intensity),
     vo2_max_baseline: vo2Baseline ?? template.vo2_max_baseline,
     vo2_max_current: p.current_vo2 ?? vo2Current ?? template.vo2_max_current,
+    vo2_trend: vo2Trend.length >= 2 ? vo2Trend.slice(-7) : template.vo2_trend,
     vo2_forecast_4_weeks: p.predicted_vo2_4_weeks,
     vo2_predicted_change: p.predicted_vo2_change,
     confidence: p.confidence,
@@ -405,9 +437,9 @@ export async function fetchDashboardData(memberId: string): Promise<RecoveryData
 }
 
 export interface CheckInDetails {
-  sleepQuality: number; // 1-5 (5 = restful)
-  soreness: number; // 1-5 (5 = severe)
-  energy: number; // 1-5 (5 = energized)
+  sleepQuality: number; // 1-10 (10 = restful)
+  soreness: number; // 1-10 (10 = severe)
+  energy: number; // 1-10 (10 = energized)
   symptoms: string[];
   // Only the demo simulator sets it, so a simulated check-in lands on the same
   // date as its simulated wearable reading. inference.py keys sessions by
@@ -438,13 +470,14 @@ export async function submitCheckIn(
     const response = await request<BackendCheckIn>('POST', '/checkins', {
       memberId,
       pain: details.soreness,
-      fatigue: 6 - details.energy, // invert: UI collects energy, model wants fatigue
+      fatigue: 11 - details.energy, // invert: UI collects energy, model wants fatigue
       confidence: details.sleepQuality,
       symptoms: details.symptoms,
       ...(details.timestamp ? { timestamp: details.timestamp } : {}),
     });
     const p = response.prediction;
     const coach = response.coach ?? p.coach;
+    const readinessClass = topReadinessClass(p);
     if (!currentData) {
       return { recorded: true, prediction: p, coach };
     }
@@ -456,7 +489,8 @@ export async function submitCheckIn(
         ...currentData,
         dataSource: 'LIVE_API',
         coachSource: p.coach_source ?? 'fallback',
-        recovery_score: p.recovery_score,
+        recovery_score: readinessClass.score,
+        recovery_label: readinessClass.label,
         readiness_score: p.readiness_score,
         recovery_stage: p.recovery_stage,
         recovery_trend: title(p.recovery_trend),
@@ -545,9 +579,12 @@ export async function submitExerciseLog(
   try {
     await request('POST', '/activities', {
       memberId,
+      workoutType: log.activityType,
       activityType: log.activityType,
+      durationMin: log.durationMin,
       durationMinutes: log.durationMin,
       distanceKm: log.distanceKm,
+      distance: log.distanceKm,
       avgHeartRate: log.avgHr,
       maxHeartRate: log.maxHr,
       completed: true,

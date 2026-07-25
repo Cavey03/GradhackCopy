@@ -18,6 +18,9 @@ export interface ActivityItem {
 
 export interface RecoveryData {
   dataSource?: 'LIVE_API' | 'MOCK_FALLBACK';
+  // What actually wrote the coaching prose. Independent of dataSource: the
+  // dashboard fetch can succeed while LLM generation falls back.
+  coachSource?: 'gemini' | 'fallback';
   recovery_score: number;
   readiness_score: number;
   recovery_stage: number;

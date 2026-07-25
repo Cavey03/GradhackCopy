@@ -208,7 +208,10 @@ def _latest_checkin_for_prompt(history):
 
 
 def _generate_coach(member, prediction, history, question=None):
-    """Build the APO prompt and generate the coaching prose."""
+    """Build the APO prompt and generate the coaching prose.
+
+    Returns (coach_prose, source) where source is "gemini" or "fallback".
+    """
     plan = prompt_orchestrator.authoritative_plan(prediction)
     prompt = prompt_orchestrator.build_coach_prompt(
         member=member,
@@ -249,7 +252,10 @@ def get_prediction(member_id, question=None):
 
         # The coach layer explains the prediction; it never changes it, and it
         # can never fail the request (generate_coach_message never raises).
-        prediction["coach"] = _generate_coach(member, prediction, history, question)
+        coach, coach_source = _generate_coach(member, prediction, history, question)
+        prediction["coach"] = coach
+        # What actually wrote the text, not what was configured.
+        prediction["coach_source"] = coach_source
         prediction["coach_provider"] = os.environ.get("LLM_PROVIDER", "mock")
         prediction["coach_prompt_version"] = prompt_orchestrator.PROMPT_VERSION
 
@@ -445,7 +451,8 @@ def handle_coach_message(event):
         return _response(200, prediction.get("coach") or COACH_MESSAGE)
 
     history = _recent_history(member_id)
-    return _response(200, _generate_coach(member, prediction, history, question))
+    coach, coach_source = _generate_coach(member, prediction, history, question)
+    return _response(200, {**coach, "coach_source": coach_source})
 
 
 def handle_simulation(event):

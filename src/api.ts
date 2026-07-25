@@ -27,6 +27,8 @@ interface BackendPrediction {
   intensity: string; // "very_low" | "low" | "moderate"
   confidence: number;
   top_factors?: { feature: string; direction: string }[];
+  // Set by the backend to whatever actually produced the coaching text.
+  coach_source?: 'gemini' | 'fallback';
 }
 
 interface BackendReading {
@@ -183,6 +185,8 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
 
   return {
     dataSource: 'LIVE_API',
+    // Falls back to 'fallback' for predictions stored before the coach layer.
+    coachSource: p.coach_source ?? 'fallback',
     member: {
       memberId: d.member.memberId,
       firstName: d.member.firstName ?? template.member?.firstName,

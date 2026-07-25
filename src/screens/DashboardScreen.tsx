@@ -473,8 +473,15 @@ export default function DashboardScreen({ navigation, route }: any) {
               <Text style={styles.explainLabel}>7-Day Strain:</Text>
               <Text style={styles.explainVal}>{data.explainability.training_load_7d}</Text>
             </View>
+            {/* Bedrock is denied by an org SCP on this account and is not used
+                anywhere in the stack. The prose is written by Gemini, or by a
+                canned fallback when generation fails — label it honestly. */}
             <View style={styles.bedrockBox}>
-              <Text style={styles.bedrockTitle}>AWS Bedrock AI Rationale</Text>
+              <Text style={styles.bedrockTitle}>
+                {data.coachSource === 'gemini'
+                  ? 'Gemini AI Rationale'
+                  : 'Standard Guidance (AI Unavailable)'}
+              </Text>
               <Text style={styles.bedrockText}>{data.explainability.bedrock_rationale}</Text>
             </View>
           </View>

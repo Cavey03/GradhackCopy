@@ -165,14 +165,20 @@ def fallback_coach_response(plan=None):
 
 
 def generate_coach_message(prompt, plan=None):
-    """Return validated coach prose. Never raises."""
+    """Return (coach_prose, source). Never raises.
+
+    `source` is what actually produced the text — "gemini" or "fallback" — not
+    the configured provider. Those differ whenever generation fails, and the
+    caller (and the UI) needs the real answer, otherwise a failed call is
+    indistinguishable from a successful one.
+    """
     provider = _provider()
     if provider == "mock":
-        return fallback_coach_response(plan)
+        return fallback_coach_response(plan), "fallback"
 
     try:
         if provider == "gemini":
-            return validate_coach_response(call_gemini(prompt))
+            return validate_coach_response(call_gemini(prompt)), "gemini"
         raise RuntimeError(f"Unknown LLM_PROVIDER: {provider}")
     except Exception as exc:
         print(json.dumps({
@@ -181,4 +187,4 @@ def generate_coach_message(prompt, plan=None):
             "provider": provider,
             "error": f"{type(exc).__name__}: {exc}",
         }))
-        return fallback_coach_response(plan)
+        return fallback_coach_response(plan), "fallback"

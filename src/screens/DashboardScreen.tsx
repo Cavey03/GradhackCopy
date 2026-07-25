@@ -74,7 +74,7 @@ export default function DashboardScreen({ navigation, route }: any) {
             </View>
             <View>
               <View style={styles.brandTitleRow}>
-                <Text style={styles.appTitle}>PulseGuard</Text>
+                <Text style={styles.appTitle}>PulseGuard Test</Text>
                 
                 {/* LIVE vs MOCK BADGE INLINED */}
                 <View

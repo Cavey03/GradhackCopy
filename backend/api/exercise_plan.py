@@ -40,6 +40,42 @@ KNOWN_ACTIVITIES = {"rest", "walk", "mobility", "breathing", "cycle", "swim", "r
 # Dropped from the allowed list when the member has a mobility limitation.
 IMPACT_ACTIVITIES = {"run"}
 
+# What each recorded limitation actually constrains. Previously every value
+# did the same thing - drop running - so "Short bouts only" permitted a
+# 45-minute session and "Pool-based preferred" did not make swimming
+# available. Matching is on a substring of the casefolded text so wording
+# variants still land on a rule.
+#
+#   drop         activities removed from the allowed set
+#   add          activities made available (only where the text plainly
+#                indicates the modality, never as a general loosening)
+#   max_minutes  ceiling applied on top of the readiness-class ceiling
+#
+# An unrecognised limitation falls through to MOBILITY_DEFAULT, which stays
+# conservative: something is recorded, so impact comes off the table.
+MOBILITY_RULES = [
+    ("pool", {"drop": {"run"}, "add": {"swim"}}),
+    ("swim", {"drop": {"run"}, "add": {"swim"}}),
+    ("impact", {"drop": {"run"}}),
+    ("short bout", {"drop": {"run"}, "max_minutes": 20}),
+    ("rest break", {"drop": {"run"}, "max_minutes": 25}),
+    ("range of motion", {"drop": {"run"}}),
+    ("hill", {"drop": {"run"}}),
+    ("incline", {"drop": {"run"}}),
+]
+MOBILITY_DEFAULT = {"drop": IMPACT_ACTIVITIES}
+
+
+def mobility_rule(value):
+    """The constraint a recorded mobility limitation implies, or None."""
+    if not _flag_set(value):
+        return None
+    text = str(value).strip().casefold()
+    for needle, rule in MOBILITY_RULES:
+        if needle in text:
+            return rule
+    return MOBILITY_DEFAULT
+
 # Text that appears in the schema's flag fields and means "no flag set".
 _FALSEY_TEXT = {"", "none", "no", "false", "n/a", "nil", "null"}
 
@@ -234,8 +270,21 @@ def plan_envelope(prediction, member=None, history=None):
         max_intensity, max_rpe = "low", 5
 
     # ---- overrides applied regardless of readiness class ----
-    if _flag_set(context.get("mobilityLimitation")):
-        allowed -= IMPACT_ACTIVITIES
+    limitation = context.get("mobilityLimitation")
+    rule = mobility_rule(limitation)
+    if rule:
+        allowed -= rule.get("drop", set())
+        # Only ever added where the limitation names the modality, e.g.
+        # "Pool-based preferred" plainly indicates swimming is available even
+        # if the member's last session was something else.
+        allowed |= rule.get("add", set())
+    # A duration limitation is a hard ceiling for the whole week, not just for
+    # today. Applied only to the base it would otherwise leave the progression
+    # taper free to climb back past it by day six.
+    mobility_cap = (rule or {}).get("max_minutes")
+    if mobility_cap is not None:
+        max_total = min(max_total, mobility_cap)
+        week_base = min(week_base, mobility_cap)
     if str(context.get("vo2RiskBand") or "").strip().casefold() in ("high", "very_high"):
         max_intensity = _cap_intensity(max_intensity, "low")
     if not_cleared:
@@ -262,8 +311,13 @@ def plan_envelope(prediction, member=None, history=None):
         "max_intensity": max_intensity,
         "max_rpe": int(max_rpe),
         "progression_allowed": progression_allowed,
-        "week_day_max_minutes": _week_ceilings(rest_today, max_total, week_base,
-                                               progression_allowed),
+        # Carried so the app can show *why* an activity is unavailable rather
+        # than only that it is, and so the LLM can write cues that respect it.
+        "mobility_limitation": _text(limitation, 60) if rule else None,
+        "week_day_max_minutes": [
+            min(c, mobility_cap) if mobility_cap is not None else c
+            for c in _week_ceilings(rest_today, max_total, week_base, progression_allowed)
+        ],
         "anchor": {
             "last_completed_activity": last_activity,
             "last_completed_minutes": last_duration,

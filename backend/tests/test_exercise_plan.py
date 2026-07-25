@@ -144,6 +144,54 @@ check('vo2RiskBand "High" caps intensity at low',
 env_missing = ep.plan_envelope(pred("PROGRESS"), {"recoveryContext": {}}, HISTORY_RUNNER)
 check("absent clearance does not restrict", env_missing["max_intensity"] == "moderate")
 
+# Each recorded mobility limitation must constrain what it names. Before this
+# they all did the same thing - drop running - so "Short bouts only" still
+# permitted a 45 minute session and "Pool-based preferred" did not make
+# swimming available.
+print("\n== mobility limitations ==")
+
+
+def mob(text):
+    return ep.plan_envelope(
+        pred("PROGRESS"),
+        {"activityPreference": "run", "recoveryContext": {"mobilityLimitation": text}},
+        HISTORY_RUNNER,
+    )
+
+
+e = mob("Short bouts only")
+check("'Short bouts only' caps duration", e["max_total_minutes"] == 20, e["max_total_minutes"])
+check("'Short bouts only' caps every week day",
+      e["week_day_max_minutes"] == [20] * 7, e["week_day_max_minutes"])
+
+e = mob("Needs rest breaks")
+check("'Needs rest breaks' caps duration", e["max_total_minutes"] == 25, e["max_total_minutes"])
+check("'Needs rest breaks' caps the week",
+      max(e["week_day_max_minutes"]) == 25, e["week_day_max_minutes"])
+
+e = mob("Pool-based preferred")
+check("'Pool-based preferred' makes swimming available", "swim" in e["allowed_activities"])
+check("'Pool-based preferred' still drops running", "run" not in e["allowed_activities"])
+
+e = mob("Avoid impact")
+check("'Avoid impact' drops running", "run" not in e["allowed_activities"])
+check("'Avoid impact' does not cap duration", e["max_total_minutes"] == 39, e["max_total_minutes"])
+
+e = mob("Some limitation nobody anticipated")
+check("unrecognised limitation stays conservative",
+      "run" not in e["allowed_activities"], e["allowed_activities"])
+
+e = mob("None")
+check("'None' is not a limitation",
+      "run" in e["allowed_activities"] and e["mobility_limitation"] is None,
+      e["allowed_activities"])
+
+for text in ("Short bouts only", "Needs rest breaks", "Pool-based preferred",
+             "Avoid impact", "Reduced range of motion", "Avoid steep hills"):
+    e = mob(text)
+    plan, reason = ep.validate_plan(ep.rules_plan(e, pred("PROGRESS", "run", 45, "moderate")), e)
+    check(f"rules_plan validates under '{text}'", plan is not None, reason)
+
 env_flat_trend = ep.plan_envelope(pred("PROGRESS", trend="stable"), MEMBER, HISTORY_RUNNER)
 check("progression needs an improving VO2 trend",
       env_flat_trend["progression_allowed"] is False

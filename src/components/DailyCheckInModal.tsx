@@ -19,10 +19,12 @@ import {
   HeartPulse,
 } from 'lucide-react-native';
 
+import { CheckInDetails } from '../api';
+
 interface DailyCheckInModalProps {
   visible: boolean;
   onClose: () => void;
-  onSubmitCheckIn: (hasSymptoms: boolean) => void;
+  onSubmitCheckIn: (hasSymptoms: boolean, details: CheckInDetails) => void;
 }
 
 export default function DailyCheckInModal({
@@ -52,6 +54,12 @@ export default function DailyCheckInModal({
 
   const handleSubmit = () => {
     const hasRedFlags = selectedSymptoms.length > 0;
+    const details: CheckInDetails = {
+      sleepQuality,
+      soreness,
+      energy,
+      symptoms: selectedSymptoms,
+    };
     if (hasRedFlags) {
       Alert.alert(
         '⚠️ Clinical Safety Gate Triggered',
@@ -60,14 +68,14 @@ export default function DailyCheckInModal({
           {
             text: 'Acknowledge Plan Shift',
             onPress: () => {
-              onSubmitCheckIn(true);
+              onSubmitCheckIn(true, details);
               onClose();
             },
           },
         ]
       );
     } else {
-      onSubmitCheckIn(false);
+      onSubmitCheckIn(false, details);
       onClose();
     }
   };

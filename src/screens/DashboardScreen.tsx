@@ -1,7 +1,8 @@
 // src/screens/DashboardScreen.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform } from 'react-native';
 import { OPTIMAL_STATE, WARNING_STATE, RecoveryData } from '../mockData';
+import { fetchDashboardData, submitCheckIn } from '../api';
 import { 
   ShieldCheck, 
   AlertTriangle, 
@@ -23,13 +24,21 @@ import VitalityScoreRing from '../components/VitalityScoreRing';
 type CategoryType = 'Recovery' | 'Strain' | 'Sleep' | 'Heart' | 'AI Plan';
 
 export default function DashboardScreen({ navigation, route }: any) {
-  const [isOptimal, setIsOptimal] = useState(true);
+  const entityNumber = route?.params?.entityNumber || 'ENT000122';
+  const [data, setData] = useState<RecoveryData>(route?.params?.initialData || OPTIMAL_STATE);
   const [activeCategory, setActiveCategory] = useState<CategoryType>('Recovery');
   const [showExplainability, setShowExplainability] = useState(true);
   const [checkInVisible, setCheckInVisible] = useState(false);
-  const entityNumber = route?.params?.entityNumber || 'ENT000001';
 
-  const data: RecoveryData = isOptimal ? OPTIMAL_STATE : WARNING_STATE;
+  // "Optimal" vs "at risk" is now derived from the data instead of a toggle
+  const isOptimal = data.setback_probability < 0.4;
+
+  // If Login didn't pass data (e.g. deep link during dev), fetch it live
+  useEffect(() => {
+    if (!route?.params?.initialData) {
+      fetchDashboardData(entityNumber).then(setData).catch(() => {});
+    }
+  }, [entityNumber]);
 
   const categories = [
     { id: 'Recovery', label: 'Recovery', color: '#E11082', Icon: Activity },
@@ -73,7 +82,7 @@ export default function DashboardScreen({ navigation, route }: any) {
 <View style={styles.actionToolbar}>
   <TouchableOpacity 
     style={styles.toolbarBtnPrimary} 
-    onPress={() => navigation.navigate('Simulator')}
+    onPress={() => navigation.navigate('Simulator', { entityNumber })}
   >
     <Sparkles size={16} color="#FFF" />
     <Text style={styles.toolbarBtnPrimaryText}>What-If AI Simulator</Text>
@@ -323,10 +332,16 @@ export default function DashboardScreen({ navigation, route }: any) {
       <DailyCheckInModal
         visible={checkInVisible}
         onClose={() => setCheckInVisible(false)}
-        onSubmitCheckIn={(hasSymptoms) => {
-          if (hasSymptoms) {
-            setIsOptimal(false);
-          }
+        onSubmitCheckIn={(hasSymptoms, details) => {
+          // Persist the check-in to DynamoDB (fire-and-forget; never blocks the demo)
+          submitCheckIn(entityNumber, details);
+          // Local plan shift until the real ML pipeline returns per-check-in predictions;
+          // keep the member's live VO2 values from the API
+          setData((prev) => ({
+            ...(hasSymptoms ? WARNING_STATE : OPTIMAL_STATE),
+            vo2_max_baseline: prev.vo2_max_baseline,
+            vo2_max_current: prev.vo2_max_current,
+          }));
         }}
       />
 

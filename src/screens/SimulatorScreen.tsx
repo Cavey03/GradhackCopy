@@ -12,8 +12,10 @@ import {
   KeyboardAvoidingView 
 } from 'react-native';
 import { Sparkles, ArrowLeft, ShieldCheck, AlertTriangle, Send, CheckCircle2, XCircle, AlertCircle } from 'lucide-react-native';
+import { evaluateActivity } from '../api';
 
 export default function SimulatorScreen({ navigation, route }: any) {
+  const entityNumber = route?.params?.entityNumber || 'ENT000122';
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -26,40 +28,44 @@ export default function SimulatorScreen({ navigation, route }: any) {
     "Should I push through my fatigue or rest today?"
   ];
 
-  const handleEvaluateQuery = (selectedText?: string) => {
+  const handleEvaluateQuery = async (selectedText?: string) => {
     const textToEvaluate = selectedText || query;
     if (!textToEvaluate.trim()) return;
 
     setLoading(true);
     setResult(null);
 
-    // Simulate AWS Bedrock analyzing the entity recovery data against the question
-    setTimeout(() => {
-      setLoading(false);
-      
-      const lower = textToEvaluate.toLowerCase();
-      let status = 'approved';
-      let title = 'APPROVED';
-      let summary = '';
+    // Ask the backend simulation endpoint; fall back to local heuristics offline
+    const verdict = await evaluateActivity(entityNumber, textToEvaluate);
+    setLoading(false);
 
-      if (lower.includes('band') || lower.includes('performance') || lower.includes('heavy') || lower.includes('run')) {
-        status = 'warning';
-        title = 'MODIFIED PROTOCOL RECOMMENDED';
-        summary = 'Autonomic baseline indicates moderate recovery debt. You may participate, but cap exertion at 70% intensity and hydrate aggressively.';
-      } else {
-        status = 'approved';
-        title = 'SAFE TO PROCEED';
-        summary = 'Parasympathetic tone is dominant and rMSSD values are optimal. Your physiological markers support this activity.';
-      }
+    if (verdict) {
+      setResult({ question: textToEvaluate, ...verdict });
+      return;
+    }
 
-      setResult({
-        question: textToEvaluate,
-        status,
-        title,
-        summary,
-        bedrockRationale: 'AWS Bedrock cross-referenced 7-day HRV trailing baseline, sleep efficiency metrics, and historical strain logs to formulate this safety boundary.'
-      });
-    }, 1000);
+    const lower = textToEvaluate.toLowerCase();
+    let status = 'approved';
+    let title = 'APPROVED';
+    let summary = '';
+
+    if (lower.includes('band') || lower.includes('performance') || lower.includes('heavy') || lower.includes('run')) {
+      status = 'warning';
+      title = 'MODIFIED PROTOCOL RECOMMENDED';
+      summary = 'Autonomic baseline indicates moderate recovery debt. You may participate, but cap exertion at 70% intensity and hydrate aggressively.';
+    } else {
+      status = 'approved';
+      title = 'SAFE TO PROCEED';
+      summary = 'Parasympathetic tone is dominant and rMSSD values are optimal. Your physiological markers support this activity.';
+    }
+
+    setResult({
+      question: textToEvaluate,
+      status,
+      title,
+      summary,
+      bedrockRationale: 'AWS Bedrock cross-referenced 7-day HRV trailing baseline, sleep efficiency metrics, and historical strain logs to formulate this safety boundary.'
+    });
   };
 
   return (

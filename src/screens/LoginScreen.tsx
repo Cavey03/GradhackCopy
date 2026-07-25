@@ -11,22 +11,33 @@ import {
   KeyboardAvoidingView 
 } from 'react-native';
 import { ShieldCheck, ArrowRight, Database } from 'lucide-react-native';
+import { fetchDashboardData, MemberNotFoundError } from '../api';
 
 export default function LoginScreen({ navigation, route }: any) {
   const [entityNumber, setEntityNumber] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const handleLookup = () => {
-    if (!entityNumber.trim()) return;
+  const handleLookup = async () => {
+    const memberId = entityNumber.trim().toUpperCase();
+    if (!memberId) return;
 
     setIsLoading(true);
+    setErrorMsg(null);
 
-    // Simulate backend query fetching the member row from the spreadsheet
-    setTimeout(() => {
+    try {
+      // Real lookup: pulls the member's dashboard from DynamoDB via API Gateway.
+      const initialData = await fetchDashboardData(memberId);
+      navigation.replace('Dashboard', { entityNumber: memberId, initialData });
+    } catch (error) {
+      if (error instanceof MemberNotFoundError) {
+        setErrorMsg(`No member found for "${memberId}". Try a seeded demo ID, e.g. ENT000122.`);
+      } else {
+        setErrorMsg('Could not reach the recovery platform. Check your connection and try again.');
+      }
+    } finally {
       setIsLoading(false);
-      // Navigate to Dashboard, passing or loading the entity's data context
-      navigation.replace('Dashboard');
-    }, 1200);
+    }
   };
 
   return (
@@ -57,17 +68,20 @@ export default function LoginScreen({ navigation, route }: any) {
           <Text style={styles.inputLabel}>ENTITY / MEMBER NUMBER</Text>
           <TextInput
             style={styles.textInput}
-            placeholder="e.g., ENT000001"
+            placeholder="e.g., ENT000122"
             placeholderTextColor="#94A3B8"
-            keyboardType="number-pad"
+            autoCapitalize="characters"
+            autoCorrect={false}
             value={entityNumber}
-            onChangeText={setEntityNumber}
+            onChangeText={(text) => { setEntityNumber(text); setErrorMsg(null); }}
             editable={!isLoading}
             onSubmitEditing={handleLookup}
             returnKeyType="done"
           />
 
-          <TouchableOpacity 
+          {errorMsg && <Text style={styles.errorText}>{errorMsg}</Text>}
+
+          <TouchableOpacity
             style={[styles.primaryBtn, (!entityNumber.trim() || isLoading) && styles.primaryBtnDisabled]}
             disabled={!entityNumber.trim() || isLoading}
             onPress={handleLookup}
@@ -84,7 +98,7 @@ export default function LoginScreen({ navigation, route }: any) {
         </View>
 
         <Text style={styles.demoHint}>
-          Demo Hint: Type any number (e.g. ENT000001) to instantly pull record profiles.
+          Demo Hint: Enter a seeded member ID (e.g. ENT000122) to pull their live profile from DynamoDB.
         </Text>
 
       </View>
@@ -110,6 +124,7 @@ const styles = StyleSheet.create({
   
   inputLabel: { fontSize: 11, fontWeight: '800', color: '#94A3B8', letterSpacing: 1, marginBottom: 8 },
   textInput: { backgroundColor: '#F8FAFC', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16, color: '#002B49', borderWidth: 1, borderColor: '#E2E8F0', marginBottom: 20 },
+  errorText: { fontSize: 12, color: '#DC2626', fontWeight: '600', marginTop: -12, marginBottom: 16 },
   
   primaryBtn: { backgroundColor: '#E11082', flexDirection: 'row', paddingVertical: 16, borderRadius: 14, justifyContent: 'center', alignItems: 'center', ...Platform.select({ ios: { shadowColor: '#E11082', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8 }, android: { elevation: 3 } }) },
   primaryBtnDisabled: { backgroundColor: '#CBD5E1', shadowOpacity: 0, elevation: 0 },

@@ -1,93 +1,64 @@
+// src/components/TrendChart.tsx
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import Svg, { Path, Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
 
-interface ChartProps {
+interface TrendChartProps {
   isOptimal: boolean;
+  history?: number[]; // Real recovery scores / values over time
 }
 
-export default function TrendChart({ isOptimal }: ChartProps) {
-  // Mock 7-day trend data (Recovery scores out of 100)
-  const optimalTrend = [72, 78, 65, 80, 82, 85, 85];
-  const warningTrend = [78, 70, 62, 55, 50, 45, 48];
+export default function TrendChart({ isOptimal, history }: TrendChartProps) {
+  // Use real history array if provided (e.g. [65, 70, 68, 75, 82, 80, 88]), otherwise fallback to default baseline points
+  const points = (history && history.length >= 2) 
+    ? history 
+    : (isOptimal ? [60, 65, 70, 72, 78, 82, 88] : [75, 70, 62, 55, 48, 42, 40]);
 
-  const data = isOptimal ? optimalTrend : warningTrend;
-  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  // Map 7 data points to SVG viewBox coordinates (width: 300, height: 80)
+  const width = 300;
+  const height = 80;
+  const minVal = Math.min(...points, 0);
+  const maxVal = Math.max(...points, 100);
+
+  const pathCoords = points.map((val, idx) => {
+    const x = (idx / (points.length - 1)) * width;
+    const y = height - ((val - minVal) / (maxVal - minVal || 1)) * (height - 20) - 10;
+    return `${idx === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
+  }).join(' ');
+
+  const strokeColor = isOptimal ? '#E11082' : '#DC2626';
 
   return (
     <View style={styles.chartContainer}>
-      <View style={styles.barRow}>
-        {data.map((value, index) => {
-          const isToday = index === data.length - 1;
-          const barHeight = (value / 100) * 80; // Scale to max 80px height
+      <Svg width="100%" height={80} viewBox={`0 0 ${width} ${height}`}>
+        <Defs>
+          <LinearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0%" stopColor={strokeColor} stopOpacity="0.3" />
+            <Stop offset="100%" stopColor={strokeColor} stopOpacity="0.0" />
+          </LinearGradient>
+        </Defs>
 
-          return (
-            <View key={index} style={styles.column}>
-              <Text style={styles.valueLabel}>{value}</Text>
-              <View style={styles.barTrack}>
-                <View
-                  style={[
-                    styles.barFill,
-                    {
-                      height: barHeight,
-                      backgroundColor: isToday
-                        ? isOptimal ? '#16A34A' : '#DC2626'
-                        : '#CBD5E1',
-                    },
-                  ]}
-                />
-              </View>
-              <Text style={[styles.dayLabel, isToday && styles.todayLabel]}>
-                {days[index]}
-              </Text>
-            </View>
-          );
-        })}
+        <Path
+          d={`${pathCoords} L ${width} ${height} L 0 ${height} Z`}
+          fill="url(#grad)"
+        />
+        <Path
+          d={pathCoords}
+          fill="none"
+          stroke={strokeColor}
+          strokeWidth="3"
+        />
+      </Svg>
+      <View style={styles.labelRow}>
+        <Text style={styles.dayLabel}>7 Days Ago</Text>
+        <Text style={styles.dayLabel}>Today</Text>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  chartContainer: {
-    marginTop: 12,
-    paddingTop: 8,
-  },
-  barRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-end',
-    height: 110,
-  },
-  column: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  valueLabel: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#64748B',
-    marginBottom: 4,
-  },
-  barTrack: {
-    width: 14,
-    height: 80,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 7,
-    justifyContent: 'flex-end',
-    overflow: 'hidden',
-  },
-  barFill: {
-    width: '100%',
-    borderRadius: 7,
-  },
-  dayLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#94A3B8',
-    marginTop: 6,
-  },
-  todayLabel: {
-    color: '#002B49',
-    fontWeight: '800',
-  },
+  chartContainer: { marginTop: 12, marginBottom: 8 },
+  labelRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
+  dayLabel: { fontSize: 10, color: '#94A3B8', fontWeight: '600' }
 });

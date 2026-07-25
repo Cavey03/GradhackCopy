@@ -1,5 +1,12 @@
 // src/mockData.ts
 
+export interface MemberProfile {
+  memberId: string;
+  firstName?: string;
+  surname?: string;
+  injury?: string;
+}
+
 export interface RecoveryData {
   recovery_score: number;
   readiness_score: number;
@@ -21,7 +28,8 @@ export interface RecoveryData {
     training_load_7d: string;
     bedrock_rationale: string;
   };
-  // Real wearable data from the API; undefined = fall back to demo values
+  // Profile data mapped from DynamoDB member record
+  member?: MemberProfile;
   sleep?: {
     latestHours: number;
     avgHours: number;
@@ -30,7 +38,7 @@ export interface RecoveryData {
   heart?: {
     restingHr: number;
     hrvMs: number | null;
-    deltaVsAvg: number | null; // latest resting HR minus average of prior readings
+    deltaVsAvg: number | null;
   };
   strain?: {
     lastWorkoutType: string;
@@ -40,10 +48,16 @@ export interface RecoveryData {
     workouts: number;
     avgRpe: number | null;
   };
-  lastReadingDate?: string; // e.g. "2026-05-12"
+  lastReadingDate?: string;
 }
 
 export const OPTIMAL_STATE: RecoveryData = {
+  member: {
+    memberId: 'ENT000122',
+    firstName: 'Marnus',
+    surname: 'Nieman',
+    injury: 'None (Cleared for full activity)',
+  },
   recovery_score: 84.5,
   readiness_score: 88.0,
   recovery_stage: 1,
@@ -62,11 +76,17 @@ export const OPTIMAL_STATE: RecoveryData = {
     resting_hr_delta: "-2 bpm vs baseline",
     sleep_debt: "0.2 hrs",
     training_load_7d: "Optimal Strain Band",
-    bedrock_rationale: "Bedrock Claude 3.5 Sonnet analysis indicates minimal autonomic stress. HRV recovery back to baseline supports a 35-minute aerobic session with minimal setback risk."
+    bedrock_rationale: "Bedrock Claude 3.5 Sonnet analysis indicates minimal autonomic stress."
   }
 };
 
 export const WARNING_STATE: RecoveryData = {
+  member: {
+    memberId: 'ENT000122',
+    firstName: 'Marnus',
+    surname: 'Nieman',
+    injury: 'Patellar Tendonitis (Stage 2 Strain)',
+  },
   recovery_score: 48.2,
   readiness_score: 42.0,
   recovery_stage: 3,
@@ -85,17 +105,6 @@ export const WARNING_STATE: RecoveryData = {
     resting_hr_delta: "+7 bpm vs baseline",
     sleep_debt: "1.8 hrs",
     training_load_7d: "High (Overreaching Threshold)",
-    bedrock_rationale: "Bedrock Claude 3.5 Sonnet flagged sympathetic tone elevation. Heart rate drift during recent sessions combined with sleep deficit warrants immediate volume reduction to prevent VO2 max regression."
+    bedrock_rationale: "Bedrock Claude 3.5 Sonnet flagged sympathetic tone elevation."
   }
 };
-
-export const MOCK_SIMULATION_RESULT = {
-  proposed_activity: "5 km Run",
-  risk_level: "HIGH",
-  safer_alternative: "20-minute Light Jog or Walk",
-  ai_reasoning: "Attempting a 5 km run with current elevated heart rate increases injury risk by 45%."
-
-};
-
-export type RecoveryState = RecoveryData;
-export const INITIAL_RECOVERY_STATE = OPTIMAL_STATE;

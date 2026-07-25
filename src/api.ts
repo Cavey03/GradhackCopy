@@ -2,7 +2,7 @@
 // Live API layer: talks to the AWS backend and adapts its responses into the
 // RecoveryData shape the screens consume. Falls back to mock data when the
 // network is unreachable so the demo can never break.
-import { OPTIMAL_STATE, WARNING_STATE, RecoveryState } from './mockData';
+import { OPTIMAL_STATE, WARNING_STATE, RecoveryData } from './mockData';
 
 export const BASE_URL =
   'https://3ist8udh05.execute-api.eu-central-1.amazonaws.com/dev';
@@ -58,6 +58,7 @@ interface BackendDashboard {
     memberId: string;
     firstName?: string;
     surname?: string;
+    injury?: string;
     vo2max?: { baseline?: number; current?: number };
   };
   latestCheckin: Record<string, unknown> | null;
@@ -118,7 +119,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
 const title = (s: string) =>
   (s || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
-function adaptDashboard(d: BackendDashboard): RecoveryState {
+function adaptDashboard(d: BackendDashboard): RecoveryData {
   const p = d.prediction;
   const atRisk = p.setback_probability >= 0.4;
   // The backend doesn't compute wearable-delta strings yet; borrow the
@@ -169,6 +170,12 @@ function adaptDashboard(d: BackendDashboard): RecoveryState {
   const lastReadingDate = readings.length ? readings[0].sk.slice('READING#'.length, 'READING#'.length + 10) : undefined;
 
   return {
+    member: {
+      memberId: d.member.memberId,
+      firstName: d.member.firstName ?? template.member?.firstName,
+      surname: d.member.surname ?? template.member?.surname,
+      injury: d.member.injury ?? (atRisk ? 'Elevated Strain Risk' : 'None / Cleared'),
+    },
     sleep,
     heart,
     strain,
@@ -212,7 +219,7 @@ function adaptDashboard(d: BackendDashboard): RecoveryState {
  * - Throws MemberNotFoundError if the memberId doesn't exist (so Login can say so).
  * - Falls back to mock data on network failure (demo never breaks).
  */
-export async function fetchDashboardData(memberId: string): Promise<RecoveryState> {
+export async function fetchDashboardData(memberId: string): Promise<RecoveryData> {
   try {
     const dashboard = await request<BackendDashboard>(
       'GET',

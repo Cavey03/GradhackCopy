@@ -14,14 +14,15 @@ import {
   Zap,
   Moon,
   Heart,
-  LogOut
+  LogOut,
+  User
 } from 'lucide-react-native';
 import TrendChart from '../components/TrendChart';
 import DailyCheckInModal from '../components/DailyCheckInModal';
 import VitalityScoreRing from '../components/VitalityScoreRing';
 
 
-type CategoryType = 'Recovery' | 'Strain' | 'Sleep' | 'Heart' | 'AI Plan';
+type CategoryType = 'Recovery' | 'Strain' | 'Sleep' | 'Heart' | 'AI Plan' | 'Profile';
 
 export default function DashboardScreen({ navigation, route }: any) {
   const entityNumber = route?.params?.entityNumber || 'ENT000122';
@@ -46,6 +47,7 @@ export default function DashboardScreen({ navigation, route }: any) {
     { id: 'Sleep', label: 'Sleep', color: '#8B5CF6', Icon: Moon },
     { id: 'Heart', label: 'Heart', color: '#10B981', Icon: Heart },
     { id: 'AI Plan', label: 'AI Plan', color: '#F59E0B', Icon: Sparkles },
+    { id: 'Profile', label: 'Profile', color: '#6366F1', Icon: User },
   ];
 
   return (
@@ -313,6 +315,55 @@ export default function DashboardScreen({ navigation, route }: any) {
           </Text>
         </View>
       )}
+    
+    {/* PROFILE VIEW */}
+{activeCategory === 'Profile' && (
+  <View style={styles.card}>
+    <View style={styles.cardHeaderRow}>
+      <User size={18} color="#6366F1" />
+      <Text style={[styles.cardTitle, { marginLeft: 6 }]}>MEMBER PROFILE & CLINICAL RECORD</Text>
+    </View>
+
+    <View style={styles.profileHeaderBox}>
+      <Text style={styles.profileName}>
+        {data.member?.firstName && data.member?.surname
+          ? `${data.member.firstName} ${data.member.surname}`
+          : `Member ${entityNumber}`}
+      </Text>
+      <Text style={styles.profileIdText}>Database Entity ID: {entityNumber}</Text>
+    </View>
+
+    <View style={styles.divider} />
+
+    <View style={styles.explainRow}>
+      <Text style={styles.explainLabel}>First Name:</Text>
+      <Text style={styles.explainVal}>{data.member?.firstName || '—'}</Text>
+    </View>
+
+    <View style={styles.explainRow}>
+      <Text style={styles.explainLabel}>Surname:</Text>
+      <Text style={styles.explainVal}>{data.member?.surname || '—'}</Text>
+    </View>
+
+    <View style={styles.explainRow}>
+      <Text style={styles.explainLabel}>Active Injury / Diagnosis:</Text>
+      <Text style={[styles.explainVal, { color: isOptimal ? '#10B981' : '#DC2626' }]}>
+        {data.member?.injury || 'None'}
+      </Text>
+    </View>
+
+    <View style={styles.explainRow}>
+      <Text style={styles.explainLabel}>Clinical Stage:</Text>
+      <Text style={styles.explainVal}>Stage {data.recovery_stage}</Text>
+    </View>
+
+    <View style={styles.explainRow}>
+      <Text style={styles.explainLabel}>Baseline VO₂ Max:</Text>
+      <Text style={styles.explainVal}>{data.vo2_max_baseline} mL/kg/min</Text>
+    </View>
+  </View>
+)}
+
 
       {/* PRESCRIBED PLAN (Visible across all views) */}
       <View style={[styles.card, styles.highlightCard]}>
@@ -443,7 +494,25 @@ const styles = StyleSheet.create({
     })
   },
 
-  
+  profileHeaderBox: {
+  marginTop: 12,
+  padding: 12,
+  backgroundColor: '#F8FAFC',
+  borderRadius: 12,
+  borderWidth: 1,
+  borderColor: '#E2E8F0',
+},
+profileName: {
+  fontSize: 18,
+  fontWeight: '900',
+  color: '#002B49',
+},
+profileIdText: {
+  fontSize: 12,
+  fontWeight: '600',
+  color: '#64748B',
+  marginTop: 2,
+},
 
 actionToolbar: {
   flexDirection: 'row',

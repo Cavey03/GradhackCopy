@@ -21,12 +21,26 @@ export interface RecoveryData {
     training_load_7d: string;
     bedrock_rationale: string;
   };
-  // Real wearable sleep data from the API; undefined = fall back to demo values
+  // Real wearable data from the API; undefined = fall back to demo values
   sleep?: {
     latestHours: number;
     avgHours: number;
     nights: number;
   };
+  heart?: {
+    restingHr: number;
+    hrvMs: number | null;
+    deltaVsAvg: number | null; // latest resting HR minus average of prior readings
+  };
+  strain?: {
+    lastWorkoutType: string;
+    lastWorkoutMin: number | null;
+    lastAvgHr: number | null;
+    load7dMin: number;
+    workouts: number;
+    avgRpe: number | null;
+  };
+  lastReadingDate?: string; // e.g. "2026-05-12"
 }
 
 export const OPTIMAL_STATE: RecoveryData = {

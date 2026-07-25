@@ -102,7 +102,11 @@ export default function DashboardScreen({ navigation, route }: any) {
       {/* MOCK WEARABLE SYNC BANNER */}
       <View style={styles.syncBanner}>
         <View style={styles.syncDot} />
-        <Text style={styles.syncText}>Garmin Forerunner 955 · Synced 2m ago</Text>
+        <Text style={styles.syncText}>
+          {data.lastReadingDate
+            ? `Wearable data · last reading ${data.lastReadingDate}`
+            : 'Garmin Forerunner 955 · Synced 2m ago'}
+        </Text>
       </View>
 
       {/* INTERACTIVE VITALITY CATEGORY BUBBLES */}
@@ -206,21 +210,30 @@ export default function DashboardScreen({ navigation, route }: any) {
 
           <View style={styles.metricRow}>
             <View style={styles.metricBox}>
-              <Text style={styles.subText}>Target Strain</Text>
-              <Text style={styles.metricVal}>{isOptimal ? '12.5 - 14.0' : '5.0 - 7.5'}</Text>
+              <Text style={styles.subText}>{data.strain ? 'Last Workout' : 'Target Strain'}</Text>
+              <Text style={styles.metricVal}>
+                {data.strain
+                  ? (data.strain.lastWorkoutMin != null ? `${data.strain.lastWorkoutMin} min` : data.strain.lastWorkoutType)
+                  : (isOptimal ? '12.5 - 14.0' : '5.0 - 7.5')}
+              </Text>
             </View>
             <View style={styles.dividerVertical} />
             <View style={styles.metricBox}>
-              <Text style={styles.subText}>Current Strain</Text>
+              <Text style={styles.subText}>{data.strain ? 'Recent Load' : 'Current Strain'}</Text>
               <Text style={[styles.metricVal, { color: isOptimal ? '#00A3E0' : '#DC2626' }]}>
-                {isOptimal ? '8.2' : '14.1 (High)'}
+                {data.strain ? `${data.strain.load7dMin} min` : (isOptimal ? '8.2' : '14.1 (High)')}
               </Text>
             </View>
           </View>
 
           <Text style={styles.aiSummary}>
-            {isOptimal 
-              ? 'Your cardiovascular system is primed for moderate to high exertion workouts today.' 
+            {data.strain
+              ? `Last workout: ${data.strain.lastWorkoutType}` +
+                (data.strain.lastAvgHr != null ? `, avg HR ${data.strain.lastAvgHr} bpm` : '') +
+                `. ${data.strain.load7dMin} min across ${data.strain.workouts} recent sessions` +
+                (data.strain.avgRpe != null ? `, average RPE ${data.strain.avgRpe}/10.` : '.')
+              : isOptimal
+              ? 'Your cardiovascular system is primed for moderate to high exertion workouts today.'
               : 'Strain accumulator exceeded safe limits relative to suppressed autonomic recovery.'}
           </Text>
         </View>
@@ -274,20 +287,28 @@ export default function DashboardScreen({ navigation, route }: any) {
           <View style={styles.metricRow}>
             <View style={styles.metricBox}>
               <Text style={styles.subText}>Resting Heart Rate</Text>
-              <Text style={styles.metricVal}>{isOptimal ? '52 bpm' : '64 bpm'}</Text>
+              <Text style={styles.metricVal}>
+                {data.heart ? `${data.heart.restingHr} bpm` : (isOptimal ? '52 bpm' : '64 bpm')}
+              </Text>
             </View>
             <View style={styles.dividerVertical} />
             <View style={styles.metricBox}>
               <Text style={styles.subText}>rMSSD (HRV)</Text>
               <Text style={[styles.metricVal, { color: isOptimal ? '#10B981' : '#DC2626' }]}>
-                {isOptimal ? '68 ms' : '28 ms'}
+                {data.heart?.hrvMs != null ? `${data.heart.hrvMs} ms` : (isOptimal ? '68 ms' : '28 ms')}
               </Text>
             </View>
           </View>
 
           <Text style={styles.aiSummary}>
-            {isOptimal 
-              ? 'Parasympathetic tone is dominant. Heart rate variability is well within optimal baseline thresholds.' 
+            {data.heart
+              ? `Latest wearable reading: ${data.heart.restingHr} bpm resting` +
+                (data.heart.deltaVsAvg != null
+                  ? `, ${data.heart.deltaVsAvg >= 0 ? '+' : ''}${data.heart.deltaVsAvg} bpm vs your recent average`
+                  : '') +
+                (data.heart.hrvMs != null ? `. HRV (rMSSD) at ${data.heart.hrvMs} ms.` : '.')
+              : isOptimal
+              ? 'Parasympathetic tone is dominant. Heart rate variability is well within optimal baseline thresholds.'
               : 'Significant HRV depression observed (+12 bpm RHR elevation over 7-day baseline).'}
           </Text>
         </View>

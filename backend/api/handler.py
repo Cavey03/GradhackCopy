@@ -59,10 +59,28 @@ def handle_dashboard(event):
         Limit=7,
     ).get("Items", [])
 
+    # Newest workouts for the strain view
+    activities = timeseries_table.query(
+        KeyConditionExpression=Key("memberId").eq(member_id)
+        & Key("sk").begins_with("ACTIVITY#"),
+        ScanIndexForward=False,
+        Limit=7,
+    ).get("Items", [])
+
+    # Oldest reading = the member's VO2 baseline point
+    oldest = timeseries_table.query(
+        KeyConditionExpression=Key("memberId").eq(member_id)
+        & Key("sk").begins_with("READING#"),
+        ScanIndexForward=True,
+        Limit=1,
+    ).get("Items", [])
+
     return _response(200, {
         "member": member,
         "latestCheckin": latest_checkin,
         "recentReadings": readings,
+        "recentActivities": activities,
+        "oldestReading": oldest[0] if oldest else None,
         # Stored prediction if one exists; otherwise infer now (mock until
         # SAGEMAKER_ENDPOINT is configured)
         "prediction": latest_prediction or get_prediction(member_id),

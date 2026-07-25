@@ -28,11 +28,24 @@ interface BackendReading {
   sk: string;
   sleepHours?: number;
   sleepQualityScore?: number;
-  restingHeartRate?: number;
-  restingHr?: number;
+  restingHeartRate?: number; // seeded spelling
+  restingHr?: number; // /wearables/simulate spelling
   hrvMs?: number;
-  vo2MaxEstimate?: number;
-  vo2max?: number;
+  vo2MaxEstimate?: number; // seeded spelling
+  vo2max?: number; // /wearables/simulate spelling
+}
+
+interface BackendActivity {
+  sk: string;
+  workoutType?: string; // seeded spelling
+  activityType?: string; // app-written spelling
+  durationMin?: number; // seeded spelling
+  durationMinutes?: number; // app-written spelling
+  avgHeartRate?: number;
+  maxHeartRate?: number;
+  caloriesBurned?: number;
+  rpe?: number; // seeded spelling
+  perceivedExertion?: number; // app-written spelling
 }
 
 interface BackendDashboard {
@@ -44,6 +57,8 @@ interface BackendDashboard {
   };
   latestCheckin: Record<string, unknown> | null;
   recentReadings?: BackendReading[];
+  recentActivities?: BackendActivity[];
+  oldestReading?: BackendReading | null;
   prediction: BackendPrediction;
   coach: {
     summary: string;
@@ -105,20 +120,54 @@ function adaptDashboard(d: BackendDashboard): RecoveryState {
   // matching mock template so the explainability card stays fully populated.
   const template = atRisk ? WARNING_STATE : OPTIMAL_STATE;
 
-  // Real sleep stats from the member's wearable readings (newest first)
-  const sleepNights = (d.recentReadings ?? [])
-    .map((r) => r.sleepHours)
-    .filter((h): h is number => typeof h === 'number');
+  // ---- Real wearable stats from the member's readings (newest first) ----
+  const readings = d.recentReadings ?? [];
+  const activities = d.recentActivities ?? [];
+  const num = (v: unknown): v is number => typeof v === 'number';
+  const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  const round1 = (x: number) => Math.round(x * 10) / 10;
+
+  const sleepNights = readings.map((r) => r.sleepHours).filter(num);
   const sleep = sleepNights.length
+    ? { latestHours: sleepNights[0], avgHours: round1(avg(sleepNights)), nights: sleepNights.length }
+    : undefined;
+
+  const hrs = readings.map((r) => r.restingHeartRate ?? r.restingHr).filter(num);
+  const hrvs = readings.map((r) => r.hrvMs).filter(num);
+  const heart = hrs.length
     ? {
-        latestHours: sleepNights[0],
-        avgHours: Math.round((sleepNights.reduce((a, b) => a + b, 0) / sleepNights.length) * 10) / 10,
-        nights: sleepNights.length,
+        restingHr: hrs[0],
+        hrvMs: hrvs.length ? hrvs[0] : null,
+        deltaVsAvg: hrs.length > 1 ? Math.round(hrs[0] - avg(hrs.slice(1))) : null,
       }
     : undefined;
 
+  const durations = activities.map((a) => a.durationMin ?? a.durationMinutes).filter(num);
+  const rpes = activities.map((a) => a.rpe ?? a.perceivedExertion).filter(num);
+  const last = activities[0];
+  const strain = last
+    ? {
+        lastWorkoutType: last.workoutType ?? last.activityType ?? 'Workout',
+        lastWorkoutMin: last.durationMin ?? last.durationMinutes ?? null,
+        lastAvgHr: last.avgHeartRate ?? null,
+        load7dMin: Math.round(durations.reduce((a, b) => a + b, 0)),
+        workouts: activities.length,
+        avgRpe: rpes.length ? round1(avg(rpes)) : null,
+      }
+    : undefined;
+
+  const vo2s = readings.map((r) => r.vo2MaxEstimate ?? r.vo2max).filter(num);
+  const vo2Current = vo2s.length ? vo2s[0] : d.member.vo2max?.current;
+  const oldestVo2 = d.oldestReading ? (d.oldestReading.vo2MaxEstimate ?? d.oldestReading.vo2max) : undefined;
+  const vo2Baseline = num(oldestVo2) ? oldestVo2 : d.member.vo2max?.baseline;
+
+  const lastReadingDate = readings.length ? readings[0].sk.slice('READING#'.length, 'READING#'.length + 10) : undefined;
+
   return {
     sleep,
+    heart,
+    strain,
+    lastReadingDate,
     recovery_score: p.recovery_score,
     readiness_score: p.readiness_score,
     recovery_stage: p.recovery_stage,
@@ -127,8 +176,8 @@ function adaptDashboard(d: BackendDashboard): RecoveryState {
     recommended_activity: title(p.recommended_activity),
     duration_minutes: p.duration_minutes,
     intensity: title(p.intensity),
-    vo2_max_baseline: d.member.vo2max?.baseline ?? template.vo2_max_baseline,
-    vo2_max_current: d.member.vo2max?.current ?? template.vo2_max_current,
+    vo2_max_baseline: vo2Baseline ?? template.vo2_max_baseline,
+    vo2_max_current: vo2Current ?? template.vo2_max_current,
     confidence: p.confidence,
     ai_summary: d.coach.summary,
     ai_coaching_message: d.coach.coaching_message,
@@ -136,9 +185,16 @@ function adaptDashboard(d: BackendDashboard): RecoveryState {
       primary_factor: p.top_factors?.length
         ? title(p.top_factors[0].feature)
         : template.explainability.primary_factor,
-      resting_hr_delta: template.explainability.resting_hr_delta,
-      sleep_debt: template.explainability.sleep_debt,
-      training_load_7d: template.explainability.training_load_7d,
+      resting_hr_delta:
+        heart?.deltaVsAvg != null
+          ? `${heart.deltaVsAvg >= 0 ? '+' : ''}${heart.deltaVsAvg} bpm vs baseline`
+          : template.explainability.resting_hr_delta,
+      sleep_debt: sleep
+        ? `${Math.max(0, round1(7 - sleep.avgHours))} hrs`
+        : template.explainability.sleep_debt,
+      training_load_7d: strain
+        ? `${strain.load7dMin} min / ${strain.workouts} workouts`
+        : template.explainability.training_load_7d,
       bedrock_rationale: d.coach.explanation,
     },
   };

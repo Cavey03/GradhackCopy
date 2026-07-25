@@ -236,21 +236,28 @@ export default function DashboardScreen({ navigation, route }: any) {
 
           <View style={styles.metricRow}>
             <View style={styles.metricBox}>
-              <Text style={styles.subText}>Sleep Duration</Text>
-              <Text style={styles.metricVal}>{isOptimal ? '7h 48m' : '5h 12m'}</Text>
+              <Text style={styles.subText}>Last Night</Text>
+              <Text style={styles.metricVal}>
+                {data.sleep ? `${data.sleep.latestHours}h` : (isOptimal ? '7h 48m' : '5h 12m')}
+              </Text>
             </View>
             <View style={styles.dividerVertical} />
             <View style={styles.metricBox}>
-              <Text style={styles.subText}>Deep / REM Ratio</Text>
+              <Text style={styles.subText}>{data.sleep ? `Avg (${data.sleep.nights} nights)` : 'Deep / REM Ratio'}</Text>
               <Text style={[styles.metricVal, { color: isOptimal ? '#8B5CF6' : '#DC2626' }]}>
-                {isOptimal ? '42%' : '18%'}
+                {data.sleep ? `${data.sleep.avgHours}h` : (isOptimal ? '42%' : '18%')}
               </Text>
             </View>
           </View>
 
           <Text style={styles.aiSummary}>
-            {isOptimal 
-              ? 'High restorative sleep efficiency recorded. REM cycles adequate for neuro-muscular recovery.' 
+            {data.sleep
+              ? `Based on ${data.sleep.nights} recorded nights from your wearable. ` +
+                (data.sleep.avgHours >= 7
+                  ? 'Sleep volume supports full recovery adaptation.'
+                  : 'Sleep volume is below the 7h recovery threshold — prioritise an earlier night.')
+              : isOptimal
+              ? 'High restorative sleep efficiency recorded. REM cycles adequate for neuro-muscular recovery.'
               : 'Elevated nocturnal wake frequency detected. Autonomic nervous system did not enter deep recovery state.'}
           </Text>
         </View>

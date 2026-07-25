@@ -21,6 +21,12 @@ export interface RecoveryData {
     training_load_7d: string;
     bedrock_rationale: string;
   };
+  // Real wearable sleep data from the API; undefined = fall back to demo values
+  sleep?: {
+    latestHours: number;
+    avgHours: number;
+    nights: number;
+  };
 }
 
 export const OPTIMAL_STATE: RecoveryData = {

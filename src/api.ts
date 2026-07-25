@@ -24,6 +24,17 @@ interface BackendPrediction {
   top_factors?: { feature: string; direction: string }[];
 }
 
+interface BackendReading {
+  sk: string;
+  sleepHours?: number;
+  sleepQualityScore?: number;
+  restingHeartRate?: number;
+  restingHr?: number;
+  hrvMs?: number;
+  vo2MaxEstimate?: number;
+  vo2max?: number;
+}
+
 interface BackendDashboard {
   member: {
     memberId: string;
@@ -32,6 +43,7 @@ interface BackendDashboard {
     vo2max?: { baseline?: number; current?: number };
   };
   latestCheckin: Record<string, unknown> | null;
+  recentReadings?: BackendReading[];
   prediction: BackendPrediction;
   coach: {
     summary: string;
@@ -93,7 +105,20 @@ function adaptDashboard(d: BackendDashboard): RecoveryState {
   // matching mock template so the explainability card stays fully populated.
   const template = atRisk ? WARNING_STATE : OPTIMAL_STATE;
 
+  // Real sleep stats from the member's wearable readings (newest first)
+  const sleepNights = (d.recentReadings ?? [])
+    .map((r) => r.sleepHours)
+    .filter((h): h is number => typeof h === 'number');
+  const sleep = sleepNights.length
+    ? {
+        latestHours: sleepNights[0],
+        avgHours: Math.round((sleepNights.reduce((a, b) => a + b, 0) / sleepNights.length) * 10) / 10,
+        nights: sleepNights.length,
+      }
+    : undefined;
+
   return {
+    sleep,
     recovery_score: p.recovery_score,
     readiness_score: p.readiness_score,
     recovery_stage: p.recovery_stage,

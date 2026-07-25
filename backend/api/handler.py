@@ -51,9 +51,18 @@ def handle_dashboard(event):
     latest_checkin = _latest_item(member_id, "CHECKIN")
     latest_prediction = _latest_item(member_id, "PREDICTION")
 
+    # Newest wearable readings (sleep, HR, VO2) so the app can show real data
+    readings = timeseries_table.query(
+        KeyConditionExpression=Key("memberId").eq(member_id)
+        & Key("sk").begins_with("READING#"),
+        ScanIndexForward=False,
+        Limit=7,
+    ).get("Items", [])
+
     return _response(200, {
         "member": member,
         "latestCheckin": latest_checkin,
+        "recentReadings": readings,
         # Stored prediction if one exists; otherwise infer now (mock until
         # SAGEMAKER_ENDPOINT is configured)
         "prediction": latest_prediction or get_prediction(member_id),

@@ -536,6 +536,11 @@ const styles = StyleSheet.create({
   metricBox: { flex: 1, alignItems: 'center' },
   subText: { fontSize: 12, color: '#64748B', fontWeight: '600' },
   metricVal: { fontSize: 24, fontWeight: '900', color: '#002B49', marginTop: 4 },
+  forecastBox: { marginTop: 16, padding: 14, borderRadius: 14, backgroundColor: '#F0F9FF', borderWidth: 1, borderColor: '#BAE6FD', alignItems: 'center' },
+  forecastLabel: { fontSize: 11, fontWeight: '900', color: '#0369A1', letterSpacing: 0.8 },
+  forecastValue: { fontSize: 24, fontWeight: '900', color: '#002B49', marginTop: 5 },
+  forecastChange: { fontSize: 13, fontWeight: '800', marginTop: 4 },
+  forecastDisclaimer: { fontSize: 11, color: '#64748B', marginTop: 6, fontStyle: 'italic' },
   
   highlightCard: { backgroundColor: '#002B49', borderColor: '#001A2C' },
   planTitle: { fontSize: 22, fontWeight: '900', color: '#FFFFFF', marginTop: 8, letterSpacing: -0.5 },

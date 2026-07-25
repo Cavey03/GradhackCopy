@@ -360,12 +360,13 @@ No `.env`, no AWS credentials needed — `BASE_URL` is hardcoded in `src/api.ts`
 and the API has no authorizer.
 
 - `src/api.ts` — fetch layer. `adaptDashboard()` flattens the backend response
-  into the `RecoveryState` the screens consume, mixing model outputs with
+  into the `RecoveryData` the screens consume, mixing model outputs with
   values it computes itself from raw readings (resting-HR delta, 7-day strain,
   VO2 baseline vs current). `TIMEOUT_MS = 20000` — sized for cold starts; at
   the previous 5s the app silently fell back to mocks.
 - `src/screens/` — `DashboardScreen`, `LoginScreen`, `SimulatorScreen`
-- `src/components/` — `DailyCheckInModal`, `TrendChart`, `VitalityScoreRing`
+- `src/components/` — `DailyCheckInModal`, `TrendChart`, `VitalityScoreRing`,
+  `WearableSimulatorModal`
 
 ### Still mock in the UI
 - **7-day trend chart** — hardcoded in `TrendChart.tsx`, identical for every
@@ -476,7 +477,7 @@ work supersedes this; flagged so nobody mistakes the default for a prediction.
 8. **The Gemini API key is short-lived.** When it expires the coach silently
    reverts to fallback text — no error, just canned wording. Set a fresh key
    before demoing (§9).
-7. **`prepared_data/master_dataset_with_identifiers.csv` contains names, ages
+9. **`prepared_data/master_dataset_with_identifiers.csv` contains names, ages
    and diagnoses** and sits in a public repo. Only 59 distinct first names
    appear, which suggests generated names, but confirm before that repo stays
    public.

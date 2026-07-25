@@ -8,6 +8,7 @@ import {
   RecoveryData,
   ExercisePlan,
   WeekPlanDay,
+  PlanEnvelope,
 } from './mockData';
 
 export const BASE_URL =
@@ -47,6 +48,8 @@ interface BackendPrediction {
   // the two can never disagree.
   exercise_plan?: ExercisePlan;
   week_plan?: WeekPlanDay[];
+  // The model-derived limits the plan was validated against.
+  plan_envelope?: PlanEnvelope;
   // Whether the LLM's plan survived validation against the model's envelope,
   // or was rejected in favour of the deterministic plan.
   plan_source?: 'gemini' | 'rules' | 'not_requested';
@@ -219,6 +222,7 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
     // Falls back to 'fallback' for predictions stored before the coach layer.
     coachSource: p.coach_source ?? 'fallback',
     exercisePlan,
+    planEnvelope: exercisePlan ? p.plan_envelope : undefined,
     weekPlan: exercisePlan ? p.week_plan ?? d.weekPlan : undefined,
     planSource: exercisePlan ? p.plan_source ?? d.planSource ?? 'not_requested' : undefined,
     member: {

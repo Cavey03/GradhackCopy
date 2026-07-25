@@ -33,6 +33,28 @@ export interface ExercisePlan {
   progression_note?: string | null;
 }
 
+/**
+ * The limits the readiness model set for today. Computed from model output
+ * before the LLM is called and re-checked afterwards — surfacing it is what
+ * lets the screen show that the AI designed *within* the model rather than
+ * around it.
+ */
+export interface PlanEnvelope {
+  readiness: string;
+  is_rest_day: boolean;
+  allowed_activities: string[];
+  max_total_minutes: number;
+  max_intensity: string;
+  max_rpe: number;
+  progression_allowed: boolean;
+  anchor?: {
+    last_completed_activity?: string | null;
+    last_completed_minutes?: number | null;
+    last_completed_date?: string | null;
+    reported_pain?: number | null;
+  };
+}
+
 export interface WeekPlanDay {
   day: number;
   activity: string;
@@ -60,6 +82,7 @@ export interface RecoveryData {
   // case the screens fall back to the headline fields alone.
   exercisePlan?: ExercisePlan;
   weekPlan?: WeekPlanDay[];
+  planEnvelope?: PlanEnvelope;
   recovery_score: number;
   readiness_score: number;
   recovery_stage: number;

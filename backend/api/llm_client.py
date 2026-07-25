@@ -159,9 +159,21 @@ def call_gemini(prompt, schema=None, max_tokens=None):
         raw = _post(model, api_key, _build_payload(
             prompt, with_thinking_config=True, schema=schema, max_tokens=max_tokens))
     except RuntimeError as exc:
-        # Not every model accepts thinkingConfig; retry once without it.
-        if "thinking" not in str(exc).lower():
+        # Not every model accepts thinkingConfig, and the ones that reject it
+        # do not always say so: gemini-3.6-flash answers a plain 400
+        # "Request contains an invalid argument" with no field named, so
+        # matching on the word "thinking" never fired and the call fell
+        # straight to the canned fallback. Any 400 is worth one retry without
+        # it — the cost of being wrong is a single extra request.
+        message = str(exc).lower()
+        if "thinking" not in message and "http 400" not in message:
             raise
+        print(json.dumps({
+            "level": "INFO",
+            "message": "retrying_without_thinking_config",
+            "model": model,
+            "firstError": str(exc)[:200],
+        }))
         raw = _post(model, api_key, _build_payload(
             prompt, with_thinking_config=False, schema=schema, max_tokens=max_tokens))
 

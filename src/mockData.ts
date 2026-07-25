@@ -16,6 +16,15 @@ export interface ActivityItem {
   distanceKm: number | null;
 }
 
+export interface StrainMetrics {
+  lastWorkoutType: string;
+  lastWorkoutMin: number;
+  lastAvgHr?: number;
+  load7dMin: number;
+  workouts: number;
+  avgRpe?: number;
+}
+
 export interface RecoveryData {
   dataSource?: 'LIVE_API' | 'MOCK_FALLBACK';
   // What actually wrote the coaching prose. Independent of dataSource: the

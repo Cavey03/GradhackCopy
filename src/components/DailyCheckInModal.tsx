@@ -21,6 +21,8 @@ import {
 
 import { CheckInDetails } from '../api';
 
+const RATING_VALUES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
 interface DailyCheckInModalProps {
   visible: boolean;
   onClose: () => void;
@@ -32,9 +34,9 @@ export default function DailyCheckInModal({
   onClose,
   onSubmitCheckIn,
 }: DailyCheckInModalProps) {
-  const [sleepQuality, setSleepQuality] = useState<number>(4);
-  const [soreness, setSoreness] = useState<number>(2);
-  const [energy, setEnergy] = useState<number>(3);
+  const [sleepQuality, setSleepQuality] = useState<number>(7);
+  const [soreness, setSoreness] = useState<number>(3);
+  const [energy, setEnergy] = useState<number>(6);
   const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
 
   const symptomsList = [
@@ -107,7 +109,7 @@ export default function DailyCheckInModal({
                 <Text style={styles.sectionTitle}>Sleep Quality</Text>
               </View>
               <View style={styles.ratingRow}>
-                {[1, 2, 3, 4, 5].map((val) => (
+                {RATING_VALUES.map((val) => (
                   <TouchableOpacity
                     key={`sleep-${val}`}
                     style={[
@@ -127,7 +129,7 @@ export default function DailyCheckInModal({
               </View>
               <View style={styles.labelRow}>
                 <Text style={styles.labelText}>1 = Poor</Text>
-                <Text style={styles.labelText}>5 = Restful</Text>
+                <Text style={styles.labelText}>10 = Restful</Text>
               </View>
             </View>
 
@@ -138,7 +140,7 @@ export default function DailyCheckInModal({
                 <Text style={styles.sectionTitle}>Muscle Soreness</Text>
               </View>
               <View style={styles.ratingRow}>
-                {[1, 2, 3, 4, 5].map((val) => (
+                {RATING_VALUES.map((val) => (
                   <TouchableOpacity
                     key={`soreness-${val}`}
                     style={[
@@ -158,7 +160,7 @@ export default function DailyCheckInModal({
               </View>
               <View style={styles.labelRow}>
                 <Text style={styles.labelText}>1 = Fresh</Text>
-                <Text style={styles.labelText}>5 = Severe</Text>
+                <Text style={styles.labelText}>10 = Severe</Text>
               </View>
             </View>
 
@@ -169,7 +171,7 @@ export default function DailyCheckInModal({
                 <Text style={styles.sectionTitle}>Energy Level</Text>
               </View>
               <View style={styles.ratingRow}>
-                {[1, 2, 3, 4, 5].map((val) => (
+                {RATING_VALUES.map((val) => (
                   <TouchableOpacity
                     key={`energy-${val}`}
                     style={[
@@ -189,7 +191,7 @@ export default function DailyCheckInModal({
               </View>
               <View style={styles.labelRow}>
                 <Text style={styles.labelText}>1 = Drained</Text>
-                <Text style={styles.labelText}>5 = Energized</Text>
+                <Text style={styles.labelText}>10 = Energized</Text>
               </View>
             </View>
 
@@ -301,10 +303,11 @@ const styles = StyleSheet.create({
   },
   ratingRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 6,
   },
   ratingBtn: {
-    flex: 1,
+    width: '18%',
     height: 38,
     backgroundColor: '#FFF',
     borderWidth: 1,
@@ -312,7 +315,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
-    marginHorizontal: 3,
   },
   ratingBtnActive: {
     backgroundColor: '#002B49',

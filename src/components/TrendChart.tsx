@@ -5,11 +5,10 @@ import Svg, { Path, Circle, Defs, LinearGradient, Stop } from 'react-native-svg'
 
 interface TrendChartProps {
   isOptimal: boolean;
-  history?: number[]; // Real recovery scores / values over time
+  history?: number[]; // Real VO2 values over time, oldest -> newest
 }
 
 export default function TrendChart({ isOptimal, history }: TrendChartProps) {
-  // Use real history array if provided (e.g. [65, 70, 68, 75, 82, 80, 88]), otherwise fallback to default baseline points
   const points = (history && history.length >= 2) 
     ? history 
     : (isOptimal ? [60, 65, 70, 72, 78, 82, 88] : [75, 70, 62, 55, 48, 42, 40]);
@@ -17,8 +16,11 @@ export default function TrendChart({ isOptimal, history }: TrendChartProps) {
   // Map 7 data points to SVG viewBox coordinates (width: 300, height: 80)
   const width = 300;
   const height = 80;
-  const minVal = Math.min(...points, 0);
-  const maxVal = Math.max(...points, 100);
+  const rangeMin = Math.min(...points);
+  const rangeMax = Math.max(...points);
+  const padding = Math.max((rangeMax - rangeMin) * 0.15, 1);
+  const minVal = rangeMin - padding;
+  const maxVal = rangeMax + padding;
 
   const pathCoords = points.map((val, idx) => {
     const x = (idx / (points.length - 1)) * width;

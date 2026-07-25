@@ -143,14 +143,12 @@ export default function WearableSimulatorModal({ visible, onClose, memberId, bas
     const wearable = await simulateWearable(memberId, reading);
     // Same timestamp as the reading: inference.py keys sessions by date, so
     // both must land on the same simulated day to be seen as one session.
-    // submitCheckIn takes a 1-5 energy value and sends fatigue = 6 - energy,
-    // so invert here. Clamp to 1..5 — the metric bounds are 0..10 and using
-    // them here would let energy go negative and silently distort fatigue.
-    const energy = Math.min(5, Math.max(1, 6 - current.fatigue));
+    // submitCheckIn takes a 1-10 energy value and sends fatigue = 11 - energy.
+    const energy = Math.min(10, Math.max(1, 11 - current.fatigue));
     const checkin = await submitCheckIn(memberId, {
       soreness: current.pain,
       energy,
-      sleepQuality: 3,
+      sleepQuality: 6,
       symptoms: scenario === 'setback' ? ['fatigue'] : [],
       timestamp: stamp,
     });

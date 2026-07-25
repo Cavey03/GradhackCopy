@@ -129,6 +129,7 @@ export interface RecoveryData {
   weekPlan?: WeekPlanDay[];
   planEnvelope?: PlanEnvelope;
   recovery_score: number;
+  recovery_label?: 'REDUCE' | 'MAINTAIN' | 'PROGRESS';
   readiness_score: number;
   recovery_stage: number;
   recovery_trend: string;
@@ -138,6 +139,7 @@ export interface RecoveryData {
   intensity: string;
   vo2_max_baseline: number;
   vo2_max_current: number;
+  vo2_trend?: number[];
   vo2_forecast_4_weeks?: number;
   vo2_predicted_change?: number;
   confidence: number;
@@ -183,6 +185,7 @@ export const OPTIMAL_STATE: RecoveryData = {
     injury: 'None (Cleared for full activity)',
   },
   recovery_score: 84.5,
+  recovery_label: 'PROGRESS',
   readiness_score: 88.0,
   recovery_stage: 1,
   recovery_trend: "Optimal",
@@ -222,6 +225,7 @@ export const WARNING_STATE: RecoveryData = {
     injury: 'Patellar Tendonitis (Stage 2 Strain)',
   },
   recovery_score: 48.2,
+  recovery_label: 'REDUCE',
   readiness_score: 42.0,
   recovery_stage: 3,
   recovery_trend: "Elevated Fatigue",

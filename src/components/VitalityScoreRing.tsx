@@ -4,19 +4,24 @@ import Svg, { Circle } from 'react-native-svg';
 
 interface VitalityScoreRingProps {
   score: number;
+  label?: 'REDUCE' | 'MAINTAIN' | 'PROGRESS';
   isOptimal?: boolean;
 }
 
-export const VitalityScoreRing = ({ score, isOptimal = true }: VitalityScoreRingProps) => {
-  // Ambient Glow & Ring Color based on score threshold
+export const VitalityScoreRing = ({ score, label, isOptimal = true }: VitalityScoreRingProps) => {
+  const ringColor =
+    label === 'PROGRESS'
+      ? '#10B981'
+      : label === 'REDUCE'
+      ? '#EF4444'
+      : '#F59E0B';
   const glowColor =
-    score >= 75
-      ? 'rgba(16, 185, 129, 0.35)' // Soft Emerald
-      : score >= 50
-      ? 'rgba(255, 221, 163, 1)' // Soft Amber
-      : 'rgba(239, 68, 68, 0.35)';  // Soft Red Warning
-
-  const ringColor = score >= 75 ? '#10B981' : score >= 50 ? '#F59E0B' : '#EF4444';
+    label === 'PROGRESS'
+      ? 'rgba(16, 185, 129, 0.35)'
+      : label === 'REDUCE'
+      ? 'rgba(239, 68, 68, 0.35)'
+      : 'rgba(255, 221, 163, 1)';
+  const displayLabel = label ?? (isOptimal ? 'MAINTAIN' : 'REDUCE');
 
   // SVG Ring calculation
   const size = 160;
@@ -24,7 +29,8 @@ export const VitalityScoreRing = ({ score, isOptimal = true }: VitalityScoreRing
   const center = size / 2;
   const radius = size / 2 - strokeWidth / 2;
   const circumference = 2 * Math.PI * radius;
-  const strokeDashoffset = circumference - (circumference * score) / 100;
+  const boundedScore = Math.max(0, Math.min(100, score));
+  const strokeDashoffset = circumference - (circumference * boundedScore) / 100;
 
   return (
     <View style={styles.container}>
@@ -59,8 +65,8 @@ export const VitalityScoreRing = ({ score, isOptimal = true }: VitalityScoreRing
 
       {/* 3. Center Score Text */}
       <View style={styles.textContainer}>
-        <Text style={styles.scoreText}>{score}</Text>
-        <Text style={styles.scoreLabel}>VITALITY</Text>
+        <Text style={styles.scoreText}>{Math.round(boundedScore)}%</Text>
+        <Text style={styles.scoreLabel}>{displayLabel}</Text>
       </View>
     </View>
   );

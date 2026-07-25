@@ -45,6 +45,11 @@ RESPONSE_SCHEMA = {
     "required": list(REQUIRED_COACH_FIELDS),
 }
 
+# The full activity vocabulary. Which of these a given member may actually do
+# is decided per request by the envelope and enforced by the validator — this
+# only stops the model inventing activity names that no envelope could match.
+PLAN_ACTIVITIES = ["rest", "walk", "mobility", "breathing", "cycle", "swim", "run"]
+
 # Prose plus a structured plan. Nothing here is trusted: every plan field is
 # re-checked against the envelope by exercise_plan.validate_plan(), and the
 # schema only shapes the response so that validation has something to check.
@@ -62,7 +67,11 @@ PLAN_RESPONSE_SCHEMA = {
                         "type": "OBJECT",
                         "properties": {
                             "phase": {"type": "STRING", "enum": ["warmup", "main", "cooldown"]},
-                            "activity": {"type": "STRING"},
+                            # Enumerated because a free string invites compound
+                            # answers: one member's week came back with
+                            # "mobility and walk", which is not an activity and
+                            # cost the whole plan a rejection.
+                            "activity": {"type": "STRING", "enum": PLAN_ACTIVITIES},
                             "minutes": {"type": "INTEGER"},
                             "intensity": {
                                 "type": "STRING",
@@ -85,7 +94,7 @@ PLAN_RESPONSE_SCHEMA = {
                 "type": "OBJECT",
                 "properties": {
                     "day": {"type": "INTEGER"},
-                    "activity": {"type": "STRING"},
+                    "activity": {"type": "STRING", "enum": PLAN_ACTIVITIES},
                     "durationMinutes": {"type": "INTEGER"},
                     "intensity": {
                         "type": "STRING",

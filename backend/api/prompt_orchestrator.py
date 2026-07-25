@@ -231,6 +231,9 @@ the member receives a generic plan instead:
 - no target_rpe may exceed plan_envelope.max_rpe;
 - if plan_envelope.is_rest_day is true, every block must be "rest" with zero
   minutes, and week_plan day 1 must be rest;
+- if plan_envelope.allowed_activities is empty, this member is medically
+  cleared for nothing at all: every one of the seven days must be "rest" with
+  zero minutes. Do not plan a return to activity later in the week;
 - week_plan must contain exactly 7 entries, day 1 through day 7, and day N's
   durationMinutes must not exceed plan_envelope.week_day_max_minutes[N-1].
 

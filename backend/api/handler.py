@@ -54,8 +54,9 @@ def handle_dashboard(event):
     return _response(200, {
         "member": member,
         "latestCheckin": latest_checkin,
-        # Fall back to the mock until Member 4's pipeline writes real predictions
-        "prediction": latest_prediction or MODEL_PREDICTION,
+        # Stored prediction if one exists; otherwise infer now (mock until
+        # SAGEMAKER_ENDPOINT is configured)
+        "prediction": latest_prediction or get_prediction(member_id),
         "todaysPlan": DASHBOARD["todaysPlan"],   # still mock; becomes real with the Plan entity
         "weekPlan": DASHBOARD["weekPlan"],
         "coach": DASHBOARD["coach"],
@@ -145,6 +146,66 @@ dynamodb = boto3.resource("dynamodb")
 members_table = dynamodb.Table(os.environ["MEMBERS_TABLE"])
 timeseries_table = dynamodb.Table(os.environ["TIMESERIES_TABLE"])
 
+# Member 4's SageMaker endpoint; empty = mock mode (see get_prediction)
+SAGEMAKER_ENDPOINT = os.environ.get("SAGEMAKER_ENDPOINT", "")
+sagemaker_runtime = boto3.client("sagemaker-runtime")
+
+
+def _recent_history(member_id, limit=60):
+    """Newest raw timeseries items (check-ins, activities, readings) for a member.
+    Excludes PREDICTION# items — the model shouldn't be fed its own output."""
+    resp = timeseries_table.query(
+        KeyConditionExpression=Key("memberId").eq(member_id),
+        ScanIndexForward=False,
+        Limit=limit,
+    )
+    return [i for i in resp.get("Items", []) if not i["sk"].startswith("PREDICTION#")]
+
+
+def get_prediction(member_id):
+    """Readiness/VO2 prediction for a member (contract: plan section 10.1).
+
+    When SAGEMAKER_ENDPOINT is set, synchronously invokes Member 4's endpoint
+    with the member profile + raw recent history (the inference script computes
+    the engineered features so they match training), persists the result as a
+    PREDICTION# item, and returns it. When unset — or on any failure — returns
+    the static mock so the app always receives a valid prediction.
+    """
+    if not SAGEMAKER_ENDPOINT:
+        return MODEL_PREDICTION
+    try:
+        member = members_table.get_item(Key={"memberId": member_id}).get("Item") or {}
+        payload = json.dumps({
+            "memberId": member_id,
+            "member": member,
+            "history": _recent_history(member_id),
+        }, default=_json_default)
+        resp = sagemaker_runtime.invoke_endpoint(
+            EndpointName=SAGEMAKER_ENDPOINT,
+            ContentType="application/json",
+            Accept="application/json",
+            Body=payload,
+        )
+        prediction = json.loads(resp["Body"].read())
+        ts = _now_iso()
+        timeseries_table.put_item(Item=_to_dynamo({
+            "memberId": member_id,
+            "sk": f"PREDICTION#{ts}",
+            "type": "PREDICTION",
+            "createdAt": ts,
+            **prediction,
+        }))
+        return prediction
+    except Exception:
+        print(json.dumps({
+            "level": "ERROR",
+            "message": "sagemaker_inference_failed",
+            "memberId": member_id,
+            "endpoint": SAGEMAKER_ENDPOINT,
+            "traceback": traceback.format_exc(),
+        }))
+        return MODEL_PREDICTION
+
 
 def _now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -215,11 +276,11 @@ def handle_checkin(event):
     }
     timeseries_table.put_item(Item=_to_dynamo(item))
 
-    # Mock prediction for now; later this triggers Member 4's inference pipeline
+    # Fresh inference after new data (mock until SAGEMAKER_ENDPOINT is configured)
     return _response(201, {
         "status": "recorded",
         "checkinSk": item["sk"],
-        "prediction": MODEL_PREDICTION,
+        "prediction": get_prediction(member_id),
     })
 
 
@@ -249,7 +310,7 @@ def handle_activity(event):
     return _response(201, {
         "status": "recorded",
         "activitySk": item["sk"],
-        "prediction": MODEL_PREDICTION,
+        "prediction": get_prediction(member_id),
     })
 
 

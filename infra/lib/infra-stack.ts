@@ -4,6 +4,7 @@ import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as iam from 'aws-cdk-lib/aws-iam';
 
 export class InfraStack extends cdk.Stack {
   // Exposed as public properties so later constructs (Lambdas, IAM grants)
@@ -102,18 +103,28 @@ export class InfraStack extends cdk.Stack {
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: 'handler.lambda_handler',
       code: lambda.Code.fromAsset('../backend/api'),
-      timeout: cdk.Duration.seconds(15),
+      // Headroom for synchronous SageMaker inference (serverless cold start ~1-3s)
+      timeout: cdk.Duration.seconds(25),
       memorySize: 256,
       environment: {
         MEMBERS_TABLE: this.membersTable.tableName,
         TIMESERIES_TABLE: this.timeSeriesTable.tableName,
         CONVERSATIONS_TABLE: this.conversationsTable.tableName,
+        // Set to Member 4's endpoint name to switch from mock to real
+        // predictions — no code change needed.
+        SAGEMAKER_ENDPOINT: '',
       },
     });
 
     this.membersTable.grantReadWriteData(apiFn);
     this.timeSeriesTable.grantReadWriteData(apiFn);
     this.conversationsTable.grantReadWriteData(apiFn);
+
+    // Allow synchronous inference against any endpoint in this account/region
+    apiFn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['sagemaker:InvokeEndpoint'],
+      resources: [`arn:aws:sagemaker:${this.region}:${this.account}:endpoint/*`],
+    }));
 
     // Catch-all: any path other than /health goes to the API Lambda
     const proxy = api.root.addResource('{proxy+}');

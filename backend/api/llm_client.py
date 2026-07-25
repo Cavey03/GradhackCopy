@@ -10,18 +10,24 @@ safe plan-aware text, so the coach layer can never break a prediction response.
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models"
 
-# Kept short on purpose. A check-in already spends time on SageMaker inference
-# (up to ~10s on a cold container) and the app aborts at 20s. Better to fall
-# back to canned coach text than to blow the client's timeout budget.
-REQUEST_TIMEOUT_SECONDS = 6
+# A check-in already spends time on SageMaker inference (about a second warm,
+# up to ~10s on a cold container) and the app aborts at 20s, so this can't be
+# generous. 6s turned out to be too tight for a ~3.5k-char prompt and the
+# request timed out every time; 12s leaves room while still falling back
+# before the client gives up. Tunable without a redeploy.
+REQUEST_TIMEOUT_SECONDS = float(os.environ.get("LLM_TIMEOUT_SECONDS", "12"))
 
 REQUIRED_COACH_FIELDS = ("summary", "explanation", "coaching_message", "follow_up_question")
 MAX_FIELD_CHARS = 600
+
+MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", "1200"))
+THINKING_BUDGET = int(os.environ.get("LLM_THINKING_BUDGET", "0"))
 
 RESPONSE_SCHEMA = {
     "type": "OBJECT",
@@ -39,6 +45,44 @@ def _provider():
     return os.environ.get("LLM_PROVIDER", "mock").strip().lower()
 
 
+def _build_payload(prompt, with_thinking_config):
+    generation_config = {
+        "temperature": 0.2,
+        # Must comfortably exceed the four short fields. On a thinking model
+        # this budget also covers reasoning tokens: at 400 the model spent 384
+        # of them thinking, hit MAX_TOKENS and returned empty content.
+        "maxOutputTokens": MAX_OUTPUT_TOKENS,
+        "responseMimeType": "application/json",
+        "responseSchema": RESPONSE_SCHEMA,
+    }
+    if with_thinking_config:
+        # Explaining an already-decided plan needs no reasoning phase. Turning
+        # it off removes the token contention and cuts several seconds.
+        generation_config["thinkingConfig"] = {"thinkingBudget": THINKING_BUDGET}
+    return {
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": generation_config,
+    }
+
+
+def _post(model, api_key, payload):
+    request = urllib.request.Request(
+        url=f"{GEMINI_ENDPOINT}/{model}:generateContent",
+        data=json.dumps(payload).encode("utf-8"),
+        # Key in a header, not the query string, so it can't land in an access log.
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:400]
+        raise RuntimeError(f"Gemini HTTP {exc.code}: {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Gemini network error: {exc.reason}") from exc
+
+
 def call_gemini(prompt):
     """POST the prompt to Gemini and return the parsed JSON object."""
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -47,39 +91,37 @@ def call_gemini(prompt):
     model = os.environ.get("GEMINI_MODEL")
     if not model:
         raise RuntimeError("GEMINI_MODEL is not set.")
+    # The models API returns names as "models/gemini-…"; accept either form.
+    model = model.strip().removeprefix("models/")
 
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.2,
-            "maxOutputTokens": 500,
-            "responseMimeType": "application/json",
-            "responseSchema": RESPONSE_SCHEMA,
-        },
-    }
+    started = time.time()
+    try:
+        raw = _post(model, api_key, _build_payload(prompt, with_thinking_config=True))
+    except RuntimeError as exc:
+        # Not every model accepts thinkingConfig; retry once without it.
+        if "thinking" not in str(exc).lower():
+            raise
+        raw = _post(model, api_key, _build_payload(prompt, with_thinking_config=False))
 
-    request = urllib.request.Request(
-        url=f"{GEMINI_ENDPOINT}/{model}:generateContent",
-        data=json.dumps(payload).encode("utf-8"),
-        # Key in a header, not the query string, so it can't land in an access log.
-        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
-        method="POST",
-    )
+    candidate = (raw.get("candidates") or [{}])[0]
+    finish_reason = candidate.get("finishReason")
+    print(json.dumps({
+        "level": "INFO",
+        "message": "coach_generated",
+        "model": model,
+        "durationMs": round((time.time() - started) * 1000, 1),
+        "finishReason": finish_reason,
+        "thoughtTokens": (raw.get("usageMetadata") or {}).get("thoughtsTokenCount"),
+    }))
 
     try:
-        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            raw = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:400]
-        raise RuntimeError(f"Gemini HTTP {exc.code}: {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Gemini network error: {exc.reason}") from exc
-
-    try:
-        text = raw["candidates"][0]["content"]["parts"][0]["text"]
+        text = candidate["content"]["parts"][0]["text"]
     except (KeyError, IndexError, TypeError) as exc:
-        # Usually a safety block or an empty candidate list.
-        raise RuntimeError(f"Unexpected Gemini response shape: {json.dumps(raw)[:400]}") from exc
+        # Empty content: usually MAX_TOKENS (reasoning consumed the budget) or
+        # a safety block. finishReason tells them apart.
+        raise RuntimeError(
+            f"No content from Gemini (finishReason={finish_reason}): {json.dumps(raw)[:300]}"
+        ) from exc
 
     return json.loads(text)
 

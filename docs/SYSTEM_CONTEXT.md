@@ -373,6 +373,43 @@ and the API has no authorizer.
 - **What-if simulator** — `/simulations` scans the question for words like
   "run", "sprint", "heavy" and returns hardcoded probabilities (0.44 vs 0.19).
   It never invokes a model.
+### Wearable recovery trend simulator (presenter tool)
+`src/components/WearableSimulatorModal.tsx`, opened from SimulatorScreen via
+the amber "▶ Recovery Trend Simulator (Demo)" button.
+
+Steps a member's wearable trend forward one day or week at a time and shows
+the real pipeline reacting. Four deterministic scenarios — improving, stable,
+declining, setback — with no randomness, so a rehearsed demo behaves the same
+every run. Preview shows before → after per metric, coloured by whether the
+move is good for that metric (lower is better for resting HR, pain, fatigue).
+
+Each metric goes to the endpoint that already owns it:
+
+| Data | Endpoint | Item |
+|---|---|---|
+| restingHr, hrBaseline, vo2max, sleepHours, steps, activeMinutes, **hrvMs** | `/wearables/simulate` | `READING#` |
+| pain, fatigue, confidence, symptoms | `/checkins` | `CHECKIN#` |
+| RPE | **not submitted** — belongs to `/activities`, and no workout occurs | — |
+
+**Two things that make this work, both easy to break:**
+
+1. **Both requests carry the same simulated `timestamp`.** `inference.py` keys
+   sessions by date, so a check-in stamped "now" against future-dated readings
+   lands on an older session and its pain never reaches the model. The symptom
+   is subtle: predictions stop responding and identical values come back for
+   very different pain levels. `/checkins` and `/wearables/simulate` both
+   accept an optional `timestamp`; the simulator sets both.
+2. **Setback uses pain +5, not +4.** From the default baseline of 2 that
+   reaches 7, which is where the model flips to REDUCE. At 6 it stays
+   MAINTAIN and only the risk number moves, which makes the demo look flat.
+
+Verified live: setback step → **REDUCE / rest / 85% setback**; improving step
+→ **MAINTAIN / walk 20 min / 22%**.
+
+`submitCheckIn()` returns the fresh prediction and coach text, so the modal
+shows the model reacting immediately. DashboardScreen also refetches on focus
+— without that, returning from the simulator showed the stale prediction.
+
 ### Two independent status indicators
 - **`dataSource` badge** (green "LIVE DYNAMODB" / amber "MOCK FALLBACK") —
   whether the dashboard fetch reached the backend.
@@ -507,11 +544,50 @@ without removing anything.
 
 ---
 
+## 9a. Demo-day checklist
+
+1. **Set a fresh Gemini key** (§9). The old one expires into silent fallback.
+2. **Warm the endpoint** — submit one check-in a few minutes before
+   presenting. First call after idle takes ~10s; warm calls are under 1s.
+3. **Confirm it is live** — `coach_source` should read `gemini`, and the
+   dashboard badge should read LIVE DYNAMODB.
+4. **Pick a demo member with history.** ENT000122 has extra simulated readings
+   dated into the future from testing; ENT000047 is cleaner.
+5. **Open the simulator once** before presenting so the first (slow) call is
+   already paid for.
+
+### Numbers worth quoting, and how to frame them
+- Readiness model: **macro F1 0.712**, balanced accuracy 0.757 on a genuine
+  next-session prediction task.
+- VO2 model: **16.7% better than a persistence baseline** (MAE 0.633 vs
+  0.760). Quote that, not R² 0.985 — see §3.
+- **Do not quote the 0.999 model.** It is circular and not deployed (§3).
+- `top_factors` is **not SHAP**, and `recovery_score` is a hand-weighted blend
+  of the model's probabilities, not a model output (§4).
+- If asked why not fully AWS-native: **Bedrock is denied by an org SCP** (§8),
+  with the exact error to show.
+
+## 9b. Working copies — read this before debugging "my changes did nothing"
+
+There are **three checkouts of this project** on the original dev machine:
+
+| Path | Role |
+|---|---|
+| `Desktop\DataDiscovery\recovery-platform` | VS Code working copy |
+| `Desktop\ai moddel\Gradhack-2026` | second clone, same repo/branch |
+| `Desktop\ai moddel\Gradhack-aiModels` | the models repo |
+
+The first two are the same repo on the same `dev2` branch. Edits in one are
+invisible in the other until pushed and pulled, and Metro may be serving a
+different folder than the editor has open. This already caused an hour of
+confusion. Pick one canonical checkout.
+
 ## 10. Open work
 
 | Item | Status |
 |---|---|
 | LLM coach (APO + Gemini) | **done** — live, §6a |
+| Wearable trend simulator | **done** — logic verified against live AWS; bundles clean, but never manually clicked through |
 | Set a fresh Gemini key before judging — the current one is short-lived | **required** |
 | Relabel "AWS Bedrock Rationale" → Gemini | **done** — plus a truthful `coach_source` |
 | Rename the `bedrock_rationale` field (label fixed, field name stale) | unassigned |

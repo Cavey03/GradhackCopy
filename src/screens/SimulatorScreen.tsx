@@ -130,7 +130,10 @@ export default function SimulatorScreen({ navigation, route }: any) {
               <ActivityIndicator color="#FFF" size="small" />
             ) : (
               <>
-                <Text style={styles.primaryBtnText}>Query Bedrock AI</Text>
+                {/* Not Bedrock (denied by an org SCP, never called) and not
+                    Gemini either — this path runs the readiness model and the
+                    plan envelope, with no LLM request at all. */}
+                <Text style={styles.primaryBtnText}>Check My Limits</Text>
                 <Send size={16} color="#FFF" style={{ marginLeft: 8 }} />
               </>
             )}

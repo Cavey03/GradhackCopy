@@ -209,7 +209,9 @@ export const OPTIMAL_STATE: RecoveryData = {
     resting_hr_delta: "-2 bpm vs baseline",
     sleep_debt: "0.2 hrs",
     training_load_7d: "Optimal Strain Band",
-    bedrock_rationale: "Bedrock Claude 3.5 Sonnet analysis indicates minimal autonomic stress."
+    // Offline placeholder copy. Names no model: this state is only reached
+    // when the API is unreachable, so nothing here was produced by one.
+    bedrock_rationale: "Example guidance. Recovery markers are within their usual range and no elevated strain was detected."
   }
 };
 
@@ -245,7 +247,7 @@ export const WARNING_STATE: RecoveryData = {
     resting_hr_delta: "+7 bpm vs baseline",
     sleep_debt: "1.8 hrs",
     training_load_7d: "High (Overreaching Threshold)",
-    bedrock_rationale: "Bedrock Claude 3.5 Sonnet flagged sympathetic tone elevation."
+    bedrock_rationale: "Example guidance. Resting heart rate and accumulated load are both elevated against this member's baseline."
   }
 };
 

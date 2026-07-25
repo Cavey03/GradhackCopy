@@ -1,8 +1,8 @@
 // src/screens/DashboardScreen.tsx
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
 import { OPTIMAL_STATE, WARNING_STATE, RecoveryData } from '../mockData';
-import { fetchDashboardData, submitCheckIn } from '../api';
+import { fetchDashboardData, submitCheckIn, generatePlan } from '../api';
 import { 
   ShieldCheck, 
   AlertTriangle, 
@@ -24,12 +24,36 @@ import VitalityScoreRing from '../components/VitalityScoreRing';
 
 type CategoryType = 'Recovery' | 'Strain' | 'Sleep' | 'Heart' | 'AI Plan' | 'Profile';
 
+// The headline fields arrive already formatted from api.ts, but plan blocks
+// carry the backend's raw vocabulary ("very_low", "mobility").
+const titleCase = (s: string) =>
+  (s || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
 export default function DashboardScreen({ navigation, route }: any) {
   const entityNumber = route?.params?.entityNumber || 'ENT000122';
   const [data, setData] = useState<RecoveryData>(route?.params?.initialData || OPTIMAL_STATE);
   const [activeCategory, setActiveCategory] = useState<CategoryType>('Recovery');
   const [showExplainability, setShowExplainability] = useState(true);
   const [checkInVisible, setCheckInVisible] = useState(false);
+  // Plan generation is the one action that spends an LLM request, so it is
+  // never triggered by mount or focus — only by the button on the AI Plan tab.
+  const [generating, setGenerating] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+
+  const onGeneratePlan = async () => {
+    setGenerating(true);
+    setPlanError(null);
+    const result = await generatePlan(entityNumber);
+    if (result.ok) {
+      // Re-reading the dashboard costs nothing: it serves the prediction the
+      // call above just stored, so the plan appears without a second request.
+      const fresh = await fetchDashboardData(entityNumber).catch(() => null);
+      if (fresh) setData(fresh);
+    } else {
+      setPlanError('Could not reach the plan service. Your previous plan is unchanged.');
+    }
+    setGenerating(false);
+  };
 
   // "Optimal" vs "at risk" is now derived from the data instead of a toggle
   const isOptimal = data.setback_probability < 0.4;
@@ -209,7 +233,7 @@ export default function DashboardScreen({ navigation, route }: any) {
       {/* DYNAMIC CATEGORY CONTENT */}
 
       {/* 1. RECOVERY VIEW (Default Hero View) */}
-      {(activeCategory === 'Recovery' || activeCategory === 'AI Plan') && (
+      {activeCategory === 'Recovery' && (
         <>
           <View style={styles.card}>
             <View style={styles.cardHeaderRow}>
@@ -457,6 +481,136 @@ export default function DashboardScreen({ navigation, route }: any) {
         <Text style={styles.coachingMsg}>"{data.ai_coaching_message}"</Text>
       </View>
 
+      {/* ---------------- AI PLAN TAB ---------------- */}
+      {activeCategory === 'AI Plan' && (
+        <>
+          {/* Generation is explicit. Mount and focus never trigger it, so the
+              LLM quota can only be spent by a deliberate press. */}
+          <View style={styles.card}>
+            <View style={styles.cardHeaderRow}>
+              <Sparkles size={16} color="#F59E0B" />
+              <Text style={[styles.cardTitle, { marginLeft: 6 }]}>AI SESSION PLAN</Text>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.generateBtn, generating && styles.generateBtnBusy]}
+              onPress={onGeneratePlan}
+              disabled={generating}
+              activeOpacity={0.85}
+            >
+              {generating ? (
+                <>
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                  <Text style={styles.generateBtnText}>Generating…</Text>
+                </>
+              ) : (
+                <>
+                  <Sparkles size={16} color="#FFFFFF" />
+                  <Text style={styles.generateBtnText}>
+                    {data.planSource === 'gemini' ? 'Regenerate AI Plan' : 'Generate AI Plan'}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <Text style={styles.quotaHint}>
+              This button is the only thing in the app that calls Gemini, and it uses exactly
+              one request. Opening screens, checking in and logging activities are all free.
+            </Text>
+
+            {!!planError && <Text style={styles.planErrorText}>{planError}</Text>}
+          </View>
+
+          {data.exercisePlan ? (
+            <>
+              {/* SESSION DETAIL */}
+              <View style={[styles.card, styles.highlightCard]}>
+                <Text style={styles.cardTitleLight}>TODAY'S SESSION</Text>
+                {!!data.exercisePlan.session_focus && (
+                  <Text style={styles.sessionFocus}>{data.exercisePlan.session_focus}</Text>
+                )}
+                <Text style={styles.sessionTotal}>{data.exercisePlan.total_minutes} min total</Text>
+
+                <View style={styles.sessionBox}>
+                  {data.exercisePlan.blocks.map((block, index) => (
+                    <View key={index} style={styles.blockRow}>
+                      <Text style={styles.blockPhase}>{block.phase.toUpperCase()}</Text>
+                      <View style={styles.blockBody}>
+                        <Text style={styles.blockTitle}>
+                          {block.minutes} min {titleCase(block.activity)}
+                          {' · '}{titleCase(block.intensity)}
+                          {block.target_rpe ? ` · RPE ${block.target_rpe}` : ''}
+                        </Text>
+                        {!!block.cue && <Text style={styles.blockCue}>{block.cue}</Text>}
+                      </View>
+                    </View>
+                  ))}
+
+                  {!!data.exercisePlan.stop_rules?.length && (
+                    <View style={styles.stopBox}>
+                      <Text style={styles.stopTitle}>STOP IF</Text>
+                      {data.exercisePlan.stop_rules.map((rule, index) => (
+                        <Text key={index} style={styles.stopRule}>• {rule}</Text>
+                      ))}
+                    </View>
+                  )}
+
+                  {/* Third status indicator, independent of dataSource and
+                      coachSource: whether the LLM's plan survived validation
+                      against the model's envelope. */}
+                  <Text style={styles.planSourceNote}>
+                    {data.planSource === 'gemini'
+                      ? 'Designed by Gemini within the model’s safety limits'
+                      : data.planSource === 'rules'
+                        ? 'Standard session — the AI plan failed the safety check'
+                        : 'Standard session from the model — tap Generate for an AI-designed one'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* PROVISIONAL WEEK */}
+              {!!data.weekPlan?.length && (
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>THIS WEEK (PROVISIONAL)</Text>
+                  <Text style={styles.weekNote}>
+                    Day 1 follows today’s model prediction. Days 2–7 are a provisional shape,
+                    not a forecast, and are rebuilt each time the plan is regenerated.
+                  </Text>
+                  {data.weekPlan.map((day) => {
+                    const resting = day.activity === 'rest' || day.durationMinutes === 0;
+                    return (
+                      <View key={day.day} style={styles.weekRow}>
+                        <Text style={styles.weekDay}>Day {day.day}</Text>
+                        <View style={styles.weekBody}>
+                          <Text style={[styles.weekActivity, resting && styles.weekResting]}>
+                            {resting ? 'Rest' : `${day.durationMinutes} min ${titleCase(day.activity)}`}
+                          </Text>
+                          {!!day.focus && !resting && (
+                            <Text style={styles.weekFocus}>{day.focus}</Text>
+                          )}
+                        </View>
+                        <Text style={styles.weekIntensity}>
+                          {resting ? '—' : titleCase(day.intensity)}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </>
+          ) : (
+            <View style={styles.card}>
+              <Text style={styles.emptyPlanTitle}>No session plan stored yet</Text>
+              <Text style={styles.emptyPlanText}>
+                This member’s last prediction was saved before session plans existed. Press
+                Generate above for a Gemini-designed session, or submit a check-in — that
+                rebuilds the deterministic plan for free.
+              </Text>
+            </View>
+          )}
+        </>
+      )}
+
       {/* AI EXPLAINABILITY CARD */}
       <View style={styles.explainCard}>
         <TouchableOpacity 
@@ -490,7 +644,9 @@ export default function DashboardScreen({ navigation, route }: any) {
               <Text style={styles.bedrockTitle}>
                 {data.coachSource === 'gemini'
                   ? 'Gemini AI Rationale'
-                  : 'Standard Guidance (AI Unavailable)'}
+                  : data.coachSource === 'not_requested'
+                    ? 'Standard Guidance (Tap Generate AI Plan)'
+                    : 'Standard Guidance (AI Unavailable)'}
               </Text>
               <Text style={styles.bedrockText}>{data.explainability.bedrock_rationale}</Text>
             </View>
@@ -571,6 +727,42 @@ const styles = StyleSheet.create({
   planTitle: { fontSize: 22, fontWeight: '900', color: '#FFFFFF', marginTop: 8, letterSpacing: -0.5 },
   planSub: { fontSize: 13, fontWeight: '700', color: '#E11082', marginTop: 4 },
   coachingMsg: { fontSize: 14, fontStyle: 'italic', color: '#E2E8F0', marginTop: 12, lineHeight: 20 },
+
+  // --- AI Plan tab: generate control ---
+  generateBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#F59E0B', borderRadius: 14, paddingVertical: 14, marginTop: 14,
+  },
+  generateBtnBusy: { backgroundColor: '#FBBF24' },
+  generateBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800', marginLeft: 8 },
+  quotaHint: { fontSize: 11, color: '#94A3B8', marginTop: 10, textAlign: 'center', lineHeight: 16 },
+  planErrorText: { fontSize: 12, color: '#DC2626', marginTop: 10, fontWeight: '600' },
+  emptyPlanTitle: { fontSize: 15, fontWeight: '800', color: '#002B49' },
+  emptyPlanText: { fontSize: 13, color: '#64748B', lineHeight: 20, marginTop: 6 },
+
+  // --- structured session (inside a dark card) ---
+  sessionBox: { marginTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.12)', paddingTop: 14 },
+  sessionFocus: { fontSize: 16, fontWeight: '800', color: '#FFFFFF', marginTop: 8 },
+  sessionTotal: { fontSize: 13, fontWeight: '700', color: '#F59E0B', marginTop: 4 },
+  blockRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 },
+  blockPhase: { width: 74, fontSize: 9, fontWeight: '800', color: '#E11082', letterSpacing: 0.8, marginTop: 3 },
+  blockBody: { flex: 1 },
+  blockTitle: { fontSize: 13, fontWeight: '700', color: '#F1F5F9' },
+  blockCue: { fontSize: 12, color: '#94A3B8', marginTop: 2, lineHeight: 17 },
+  stopBox: { backgroundColor: 'rgba(225,16,130,0.10)', borderRadius: 10, padding: 10, marginTop: 4 },
+  stopTitle: { fontSize: 9, fontWeight: '800', color: '#F472B6', letterSpacing: 0.8, marginBottom: 4 },
+  stopRule: { fontSize: 12, color: '#E2E8F0', lineHeight: 18 },
+  planSourceNote: { fontSize: 10, color: '#94A3B8', marginTop: 12, fontWeight: '600' },
+
+  // --- provisional week ---
+  weekNote: { fontSize: 12, color: '#64748B', lineHeight: 17, marginTop: 6, marginBottom: 12 },
+  weekRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderTopWidth: 1, borderTopColor: '#F1F5F9' },
+  weekDay: { width: 52, fontSize: 11, fontWeight: '800', color: '#94A3B8' },
+  weekBody: { flex: 1 },
+  weekActivity: { fontSize: 13, fontWeight: '700', color: '#002B49' },
+  weekResting: { color: '#94A3B8', fontWeight: '600' },
+  weekFocus: { fontSize: 11, color: '#64748B', marginTop: 1 },
+  weekIntensity: { fontSize: 11, fontWeight: '700', color: '#E11082' },
   
   explainCard: { 
     backgroundColor: '#FFFFFF', 

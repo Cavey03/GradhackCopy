@@ -2,7 +2,13 @@
 // Live API layer: talks to the AWS backend and adapts its responses into the
 // RecoveryData shape the screens consume. Falls back to mock data when the
 // network is unreachable so the demo can never break.
-import { OPTIMAL_STATE, WARNING_STATE, RecoveryData } from './mockData';
+import {
+  OPTIMAL_STATE,
+  WARNING_STATE,
+  RecoveryData,
+  ExercisePlan,
+  WeekPlanDay,
+} from './mockData';
 
 export const BASE_URL =
   'https://3ist8udh05.execute-api.eu-central-1.amazonaws.com/dev';
@@ -10,9 +16,15 @@ export const BASE_URL =
 // Warm requests return in well under a second, but a check-in or a first
 // dashboard load invokes the SageMaker serverless endpoint, and a cold
 // container takes ~10s to start. 5s aborted those and silently dropped the
-// app onto mock data. The API Gateway hard limit is 29s and the Lambda's own
-// timeout is 25s, so 20s stays inside both.
-const TIMEOUT_MS = 20000;
+// app onto mock data.
+//
+// Raised from 20s once the LLM began authoring the plan: a measured cold
+// check-in (container start + inference + a full plan generation) took 18.3s,
+// which left almost no margin. The Lambda's own timeout is 25s and API
+// Gateway's hard limit is 29s, so at 25s the app now waits exactly as long as
+// the backend can possibly run and no longer gives up while a valid response
+// is still in flight.
+const TIMEOUT_MS = 25000;
 
 // ---------- Backend response shapes (see docs/API_CONTRACT.md) ----------
 
@@ -28,7 +40,16 @@ interface BackendPrediction {
   confidence: number;
   top_factors?: { feature: string; direction: string }[];
   // Set by the backend to whatever actually produced the coaching text.
-  coach_source?: 'gemini' | 'fallback';
+  // 'not_requested' = no LLM call was made for this prediction.
+  coach_source?: 'gemini' | 'fallback' | 'not_requested';
+  // Present only when the backend has plan generation switched on. The
+  // headline fields above are derived from exercise_plan when it exists, so
+  // the two can never disagree.
+  exercise_plan?: ExercisePlan;
+  week_plan?: WeekPlanDay[];
+  // Whether the LLM's plan survived validation against the model's envelope,
+  // or was rejected in favour of the deterministic plan.
+  plan_source?: 'gemini' | 'rules' | 'not_requested';
 }
 
 interface BackendReading {
@@ -76,6 +97,10 @@ interface BackendDashboard {
     coaching_message: string;
     follow_up_question: string;
   };
+  // Real once the backend generates plans; the static demo plan otherwise.
+  weekPlan?: WeekPlanDay[];
+  exercisePlan?: ExercisePlan;
+  planSource?: 'gemini' | 'rules' | 'not_requested';
 }
 
 interface BackendSimulation {
@@ -183,10 +208,19 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
 
   const lastReadingDate = readings.length ? readings[0].sk.slice('READING#'.length, 'READING#'.length + 10) : undefined;
 
+  // A generated plan is the only thing that unlocks the structured plan UI.
+  // The backend still returns a static demo weekPlan when none exists, and
+  // rendering that would put a fabricated week in front of the member — the
+  // same silent-mock problem the dataSource badge exists to prevent.
+  const exercisePlan = p.exercise_plan ?? d.exercisePlan;
+
   return {
     dataSource: 'LIVE_API',
     // Falls back to 'fallback' for predictions stored before the coach layer.
     coachSource: p.coach_source ?? 'fallback',
+    exercisePlan,
+    weekPlan: exercisePlan ? p.week_plan ?? d.weekPlan : undefined,
+    planSource: exercisePlan ? p.plan_source ?? d.planSource ?? 'not_requested' : undefined,
     member: {
       memberId: d.member.memberId,
       firstName: d.member.firstName ?? template.member?.firstName,
@@ -324,6 +358,30 @@ export async function simulateWearable(
   } catch (error) {
     console.warn('⚠️ Wearable reading not persisted (API unreachable).', error);
     return { recorded: false };
+  }
+}
+
+/**
+ * Ask the backend to generate a fresh AI plan for this member.
+ *
+ * This is the only call in the app that spends an LLM request on demand, so
+ * it is deliberately not called on mount or on focus — the screen puts it
+ * behind an explicit button. One press = one Gemini request; the prose and
+ * the plan come back together, so it is never more than one.
+ *
+ * Returns planSource so the caller can tell whether the LLM's plan survived
+ * validation ('gemini') or was rejected in favour of the deterministic plan
+ * ('rules'). Never throws.
+ */
+export async function generatePlan(
+  memberId: string,
+): Promise<{ ok: boolean; planSource?: 'gemini' | 'rules' | 'not_requested'; error?: string }> {
+  try {
+    const res = await request<{ planSource?: 'gemini' | 'rules' | 'not_requested' }>('POST', '/plan', { memberId });
+    return { ok: true, planSource: res?.planSource };
+  } catch (error) {
+    console.warn('⚠️ Plan generation failed.', error);
+    return { ok: false, error: error instanceof Error ? error.message : 'unknown' };
   }
 }
 

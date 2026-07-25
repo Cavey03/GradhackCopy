@@ -16,11 +16,50 @@ export interface ActivityItem {
   distanceKm: number | null;
 }
 
+export interface PlanBlock {
+  phase: 'warmup' | 'main' | 'cooldown';
+  activity: string;
+  minutes: number;
+  intensity: string;
+  target_rpe?: number | null;
+  cue?: string | null;
+}
+
+export interface ExercisePlan {
+  session_focus?: string | null;
+  blocks: PlanBlock[];
+  total_minutes: number;
+  stop_rules?: string[];
+  progression_note?: string | null;
+}
+
+export interface WeekPlanDay {
+  day: number;
+  activity: string;
+  durationMinutes: number;
+  intensity: string;
+  focus?: string | null;
+  // Day 1 is bound to the model's next-session prediction; days 2-7 are the
+  // LLM's provisional shape for the week and are regenerated at each check-in.
+  provisional?: boolean;
+}
+
 export interface RecoveryData {
   dataSource?: 'LIVE_API' | 'MOCK_FALLBACK';
   // What actually wrote the coaching prose. Independent of dataSource: the
   // dashboard fetch can succeed while LLM generation falls back.
-  coachSource?: 'gemini' | 'fallback';
+  // 'not_requested' means no LLM call was made — the normal state until the
+  // member presses Generate, and not a failure.
+  coachSource?: 'gemini' | 'fallback' | 'not_requested';
+  // What authored the exercise plan. A third, independent signal:
+  //   gemini        - the LLM's plan passed the safety check
+  //   rules         - the LLM was asked and its plan was rejected
+  //   not_requested - deterministic plan, no LLM call was made
+  planSource?: 'gemini' | 'rules' | 'not_requested';
+  // Both absent unless the backend has plan generation switched on, in which
+  // case the screens fall back to the headline fields alone.
+  exercisePlan?: ExercisePlan;
+  weekPlan?: WeekPlanDay[];
   recovery_score: number;
   readiness_score: number;
   recovery_stage: number;

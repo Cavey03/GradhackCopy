@@ -7,6 +7,7 @@ from decimal import Decimal
 import boto3
 from boto3.dynamodb.conditions import Key
 
+import exercise_plan
 import llm_client
 import prompt_orchestrator
 
@@ -81,6 +82,8 @@ def handle_dashboard(event):
         Limit=1,
     ).get("Items", [])
 
+    todays_plan, week_plan = _plan_payload(prediction)
+
     return _response(200, {
         "member": member,
         "latestCheckin": latest_checkin,
@@ -88,8 +91,12 @@ def handle_dashboard(event):
         "recentActivities": activities,
         "oldestReading": oldest[0] if oldest else None,
         "prediction": prediction,
-        "todaysPlan": DASHBOARD["todaysPlan"],   # still mock; becomes real with the Plan entity
-        "weekPlan": DASHBOARD["weekPlan"],
+        "todaysPlan": todays_plan,
+        "weekPlan": week_plan,
+        # Structured session detail. Absent on predictions written before the
+        # plan layer, and whenever PLAN_PROVIDER is 'rules'.
+        "exercisePlan": prediction.get("exercise_plan"),
+        "planSource": prediction.get("plan_source"),
         # Coach text is generated alongside the prediction and stored with it,
         # so a dashboard load never calls the LLM. Falls back to the static
         # message for predictions written before the coach layer existed.
@@ -163,6 +170,28 @@ DASHBOARD = {
     "coach": COACH_MESSAGE,
 }
 
+def _plan_payload(prediction):
+    """(todaysPlan, weekPlan) for the dashboard.
+
+    Real once a prediction carries a generated plan; otherwise the original
+    static demo plan, so predictions stored before the plan layer — and the
+    whole PLAN_PROVIDER='rules' path — keep working unchanged.
+    """
+    if not prediction.get("exercise_plan"):
+        return DASHBOARD["todaysPlan"], DASHBOARD["weekPlan"]
+
+    activity = prediction.get("recommended_activity") or "rest"
+    return (
+        {
+            "activity": activity,
+            "durationMinutes": prediction.get("duration_minutes") or 0,
+            "intensity": prediction.get("intensity") or "none",
+            "completed": False,
+        },
+        prediction.get("week_plan") or DASHBOARD["weekPlan"],
+    )
+
+
 SIMULATION_RESULT = {
     "proposed": {"activity": "run", "distanceKm": 5, "intensity": "moderate"},
     "recommended": MODEL_PREDICTION,
@@ -187,6 +216,13 @@ SAGEMAKER_ENDPOINT = os.environ.get("SAGEMAKER_ENDPOINT", "")
 SAGEMAKER_REGION = os.environ.get("SAGEMAKER_REGION") or None
 sagemaker_runtime = boto3.client("sagemaker-runtime", region_name=SAGEMAKER_REGION)
 
+# Who authors the exercise plan: 'rules' keeps the deterministic
+# _plan_activity() output the app has always shown, 'gemini' lets the LLM
+# design a session inside the model-derived envelope (see exercise_plan.py).
+# Defaults to 'rules' so deploying this code changes nothing until it is
+# switched on deliberately.
+PLAN_PROVIDER = os.environ.get("PLAN_PROVIDER", "rules").strip().lower()
+
 
 def _recent_history(member_id, limit=60):
     """Newest raw timeseries items (check-ins, activities, readings) for a member.
@@ -207,10 +243,13 @@ def _latest_checkin_for_prompt(history):
     return None
 
 
-def _generate_coach(member, prediction, history, question=None):
+def _generate_coach(member, prediction, history, question=None, envelope=None):
     """Build the APO prompt and generate the coaching prose.
 
-    Returns (coach_prose, source) where source is "gemini" or "fallback".
+    Returns (coach_prose, raw_plan, source) where source is "gemini" or
+    "fallback". `raw_plan` is None unless an envelope was supplied, and is
+    unvalidated even then — it must go through exercise_plan.validate_plan()
+    before anything renders it.
     """
     plan = prompt_orchestrator.authoritative_plan(prediction)
     prompt = prompt_orchestrator.build_coach_prompt(
@@ -219,11 +258,75 @@ def _generate_coach(member, prediction, history, question=None):
         history=history,
         latest_checkin=_latest_checkin_for_prompt(history),
         question=question,
+        envelope=envelope,
     )
-    return llm_client.generate_coach_message(prompt, plan)
+    if envelope is None:
+        coach, source = llm_client.generate_coach_message(prompt, plan)
+        return coach, None, source
+    return llm_client.generate_coach_message_with_plan(prompt, plan)
 
 
-def get_prediction(member_id, question=None):
+def _attach_exercise_plan(prediction, envelope, raw_plan, generated_at, llm_requested):
+    """Validate the LLM's plan against the envelope and attach the result.
+
+    Takes the same envelope object that was sent to the LLM, so the constraints
+    the plan was checked against are provably the ones it was given.
+
+    Always attaches a plan. `plan_source` distinguishes the three ways that can
+    happen, because "we did not ask the LLM" and "the LLM's plan failed the
+    safety check" look identical on screen otherwise:
+
+      gemini        - the LLM's plan passed validation
+      rules         - the LLM was asked and its plan was rejected
+      not_requested - no LLM call was made; deterministic plan, no cost
+    """
+    if raw_plan:
+        validated, reason = exercise_plan.validate_plan(raw_plan, envelope)
+    else:
+        validated, reason = None, "no_plan_returned" if llm_requested else None
+
+    if validated:
+        plan_source = "gemini"
+    else:
+        validated = exercise_plan.rules_plan(envelope, prediction)
+        plan_source = "rules" if llm_requested else "not_requested"
+        if reason:
+            prediction["plan_rejection_reason"] = reason
+            print(json.dumps({
+                "level": "WARN",
+                "message": "exercise_plan_rejected",
+                "reason": reason,
+                "readiness": envelope.get("readiness"),
+            }))
+
+    prediction["exercise_plan"] = validated["exercise_plan"]
+    prediction["week_plan"] = validated["week_plan"]
+    prediction["plan_envelope"] = envelope
+    prediction["plan_source"] = plan_source
+    prediction["plan_prompt_version"] = prompt_orchestrator.PLAN_PROMPT_VERSION
+    prediction["plan_generated_at"] = generated_at
+
+    activity, minutes, intensity = exercise_plan.derive_headline(validated["exercise_plan"])
+    prediction["recommended_activity"] = activity
+    prediction["duration_minutes"] = minutes
+    prediction["intensity"] = intensity
+
+    # Day 1 of the week *is* today's session, so it is overwritten rather than
+    # taken from the LLM. Left alone the two disagree in a way that reads as a
+    # bug on screen: the model returned a 20-minute main block inside a
+    # 30-minute session, so the hero card said 30 min and day 1 said 20.
+    if validated["week_plan"]:
+        validated["week_plan"][0] = {
+            **validated["week_plan"][0],
+            "activity": activity,
+            "durationMinutes": minutes,
+            "intensity": intensity,
+            "provisional": False,
+        }
+    return prediction
+
+
+def get_prediction(member_id, question=None, use_llm=False):
     """Readiness/VO2 prediction for a member (contract: plan section 10.1).
 
     When SAGEMAKER_ENDPOINT is set, synchronously invokes Member 4's endpoint
@@ -231,6 +334,11 @@ def get_prediction(member_id, question=None):
     the engineered features so they match training), persists the result as a
     PREDICTION# item, and returns it. When unset — or on any failure — returns
     the static mock so the app always receives a valid prediction.
+
+    `use_llm` defaults to False so that no code path spends an LLM request by
+    accident. Dashboard loads and check-ins run the models and build the
+    deterministic plan for free; only POST /plan, which exists solely to be
+    called by the app's Generate button, passes True.
     """
     if not SAGEMAKER_ENDPOINT:
         return MODEL_PREDICTION
@@ -249,17 +357,41 @@ def get_prediction(member_id, question=None):
             Body=payload,
         )
         prediction = json.loads(resp["Body"].read())
+        ts = _now_iso()
 
-        # The coach layer explains the prediction; it never changes it, and it
-        # can never fail the request (generate_coach_message never raises).
-        coach, coach_source = _generate_coach(member, prediction, history, question)
+        # The envelope is always computed: it is pure arithmetic over the
+        # model's own output and costs nothing, and it is what lets a member
+        # who has never pressed Generate still see a real structured session.
+        envelope = exercise_plan.plan_envelope(prediction, member, history)
+        want_llm_plan = use_llm and PLAN_PROVIDER == "gemini"
+
+        if use_llm:
+            # The coach layer explains the prediction; it never changes the
+            # readiness decision, and it can never fail the request
+            # (generation never raises).
+            coach, raw_plan, coach_source = _generate_coach(
+                member, prediction, history, question,
+                envelope=envelope if want_llm_plan else None)
+        else:
+            # No LLM call at all. Inference still runs, the plan is still
+            # built — deterministically — so a check-in reacts to new data
+            # without spending a request. Only an explicit /plan does that.
+            coach = llm_client.fallback_coach_response(
+                prompt_orchestrator.authoritative_plan(prediction))
+            raw_plan, coach_source = None, "not_requested"
+
         prediction["coach"] = coach
         # What actually wrote the text, not what was configured.
         prediction["coach_source"] = coach_source
         prediction["coach_provider"] = os.environ.get("LLM_PROVIDER", "mock")
-        prediction["coach_prompt_version"] = prompt_orchestrator.PROMPT_VERSION
+        prediction["coach_prompt_version"] = (
+            prompt_orchestrator.PLAN_PROMPT_VERSION if want_llm_plan
+            else prompt_orchestrator.PROMPT_VERSION
+        )
 
-        ts = _now_iso()
+        prediction = _attach_exercise_plan(
+            prediction, envelope, raw_plan, ts, llm_requested=want_llm_plan)
+
         timeseries_table.put_item(Item=_to_dynamo({
             "memberId": member_id,
             "sk": f"PREDICTION#{ts}",
@@ -462,8 +594,38 @@ def handle_coach_message(event):
         return _response(200, prediction.get("coach") or COACH_MESSAGE)
 
     history = _recent_history(member_id)
-    coach, coach_source = _generate_coach(member, prediction, history, question)
+    # Prose only: a question never regenerates the plan, so the explain-only
+    # contract (and its guarantee that the LLM cannot emit plan fields at all)
+    # still applies on this path.
+    coach, _, coach_source = _generate_coach(member, prediction, history, question)
     return _response(200, {**coach, "coach_source": coach_source})
+
+
+def handle_generate_plan(event):
+    """Generate a fresh prediction and exercise plan on demand.
+
+    Deliberately separate from /checkins: regenerating a plan should not write
+    a check-in the member never made. Costs exactly one LLM request — the
+    prose and the plan come back from a single call — which is why the app
+    puts this behind an explicit button instead of generating on page load.
+    """
+    body = _parse_body(event)
+    if body is None:
+        return _response(400, {"error": "invalid_json"})
+
+    member_id = body.get("memberId")
+    if not member_id:
+        return _response(400, {"error": "memberId is required"})
+
+    # The one call site in the whole backend that spends an LLM request.
+    prediction = get_prediction(member_id, use_llm=True)
+    return _response(201, {
+        "status": "generated",
+        "planSource": prediction.get("plan_source"),
+        "coachSource": prediction.get("coach_source"),
+        "prediction": prediction,
+        "coach": prediction.get("coach") or COACH_MESSAGE,
+    })
 
 
 def handle_simulation(event):
@@ -523,6 +685,7 @@ REAL_ROUTES = {
     ("POST", "/activities"): handle_activity,
     ("POST", "/wearables/simulate"): handle_wearable_simulate,
     ("POST", "/simulations"): handle_simulation,
+    ("POST", "/plan"): handle_generate_plan,
     ("POST", "/coach/messages"): handle_coach_message,
     ("GET", "/dashboard"): handle_dashboard,
 }

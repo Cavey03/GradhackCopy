@@ -123,6 +123,12 @@ export class InfraStack extends cdk.Stack {
         //     --environment "Variables={...,LLM_PROVIDER=gemini,GEMINI_API_KEY=...}"
         LLM_PROVIDER: 'mock',
         GEMINI_MODEL: 'gemini-flash-latest',
+        // Who authors the exercise plan. 'rules' keeps the deterministic
+        // _plan_activity() output; 'gemini' lets the LLM design the session
+        // and the provisional week inside the model-derived safety envelope
+        // (backend/api/exercise_plan.py). Defaults to 'rules' so a deploy
+        // never switches plan generation on by accident.
+        PLAN_PROVIDER: 'rules',
       },
     });
 

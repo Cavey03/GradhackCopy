@@ -27,6 +27,11 @@ REQUIRED_COACH_FIELDS = ("summary", "explanation", "coaching_message", "follow_u
 MAX_FIELD_CHARS = 600
 
 MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", "1200"))
+# A session plus a seven-day outline is a much larger response than four short
+# prose fields, and running out of budget on a thinking model returns *empty
+# content*, not a truncated object. Kept separate so the prose-only path keeps
+# its own proven ceiling.
+PLAN_MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_PLAN_MAX_OUTPUT_TOKENS", "2500"))
 THINKING_BUDGET = int(os.environ.get("LLM_THINKING_BUDGET", "0"))
 
 RESPONSE_SCHEMA = {
@@ -40,20 +45,75 @@ RESPONSE_SCHEMA = {
     "required": list(REQUIRED_COACH_FIELDS),
 }
 
+# Prose plus a structured plan. Nothing here is trusted: every plan field is
+# re-checked against the envelope by exercise_plan.validate_plan(), and the
+# schema only shapes the response so that validation has something to check.
+PLAN_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        **RESPONSE_SCHEMA["properties"],
+        "exercise_plan": {
+            "type": "OBJECT",
+            "properties": {
+                "session_focus": {"type": "STRING"},
+                "blocks": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "phase": {"type": "STRING", "enum": ["warmup", "main", "cooldown"]},
+                            "activity": {"type": "STRING"},
+                            "minutes": {"type": "INTEGER"},
+                            "intensity": {
+                                "type": "STRING",
+                                "enum": ["none", "very_low", "low", "moderate"],
+                            },
+                            "target_rpe": {"type": "INTEGER"},
+                            "cue": {"type": "STRING"},
+                        },
+                        "required": ["phase", "activity", "minutes", "intensity"],
+                    },
+                },
+                "stop_rules": {"type": "ARRAY", "items": {"type": "STRING"}},
+                "progression_note": {"type": "STRING"},
+            },
+            "required": ["session_focus", "blocks", "stop_rules"],
+        },
+        "week_plan": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "day": {"type": "INTEGER"},
+                    "activity": {"type": "STRING"},
+                    "durationMinutes": {"type": "INTEGER"},
+                    "intensity": {
+                        "type": "STRING",
+                        "enum": ["none", "very_low", "low", "moderate"],
+                    },
+                    "focus": {"type": "STRING"},
+                },
+                "required": ["day", "activity", "durationMinutes", "intensity"],
+            },
+        },
+    },
+    "required": list(REQUIRED_COACH_FIELDS) + ["exercise_plan", "week_plan"],
+}
+
 
 def _provider():
     return os.environ.get("LLM_PROVIDER", "mock").strip().lower()
 
 
-def _build_payload(prompt, with_thinking_config):
+def _build_payload(prompt, with_thinking_config, schema=None, max_tokens=None):
     generation_config = {
         "temperature": 0.2,
         # Must comfortably exceed the four short fields. On a thinking model
         # this budget also covers reasoning tokens: at 400 the model spent 384
         # of them thinking, hit MAX_TOKENS and returned empty content.
-        "maxOutputTokens": MAX_OUTPUT_TOKENS,
+        "maxOutputTokens": max_tokens or MAX_OUTPUT_TOKENS,
         "responseMimeType": "application/json",
-        "responseSchema": RESPONSE_SCHEMA,
+        "responseSchema": schema or RESPONSE_SCHEMA,
     }
     if with_thinking_config:
         # Explaining an already-decided plan needs no reasoning phase. Turning
@@ -83,7 +143,7 @@ def _post(model, api_key, payload):
         raise RuntimeError(f"Gemini network error: {exc.reason}") from exc
 
 
-def call_gemini(prompt):
+def call_gemini(prompt, schema=None, max_tokens=None):
     """POST the prompt to Gemini and return the parsed JSON object."""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -96,12 +156,14 @@ def call_gemini(prompt):
 
     started = time.time()
     try:
-        raw = _post(model, api_key, _build_payload(prompt, with_thinking_config=True))
+        raw = _post(model, api_key, _build_payload(
+            prompt, with_thinking_config=True, schema=schema, max_tokens=max_tokens))
     except RuntimeError as exc:
         # Not every model accepts thinkingConfig; retry once without it.
         if "thinking" not in str(exc).lower():
             raise
-        raw = _post(model, api_key, _build_payload(prompt, with_thinking_config=False))
+        raw = _post(model, api_key, _build_payload(
+            prompt, with_thinking_config=False, schema=schema, max_tokens=max_tokens))
 
     candidate = (raw.get("candidates") or [{}])[0]
     finish_reason = candidate.get("finishReason")
@@ -188,3 +250,43 @@ def generate_coach_message(prompt, plan=None):
             "error": f"{type(exc).__name__}: {exc}",
         }))
         return fallback_coach_response(plan), "fallback"
+
+
+def generate_coach_message_with_plan(prompt, plan=None):
+    """Return (coach_prose, raw_plan, source). Never raises.
+
+    `raw_plan` is whatever the model returned under exercise_plan / week_plan,
+    entirely unvalidated — the caller must put it through
+    exercise_plan.validate_plan() before anything renders it. It is None
+    whenever generation fell back, so a caller that ignores validation still
+    cannot render unchecked model output.
+
+    Prose failure discards the plan too. The two are generated together from
+    one prompt, so prose that failed validation is evidence the response as a
+    whole is not trustworthy.
+    """
+    provider = _provider()
+    if provider == "mock":
+        return fallback_coach_response(plan), None, "fallback"
+
+    try:
+        if provider != "gemini":
+            raise RuntimeError(f"Unknown LLM_PROVIDER: {provider}")
+        raw = call_gemini(
+            prompt,
+            schema=PLAN_RESPONSE_SCHEMA,
+            max_tokens=PLAN_MAX_OUTPUT_TOKENS,
+        )
+        prose = validate_coach_response(raw)
+        return prose, {
+            "exercise_plan": raw.get("exercise_plan"),
+            "week_plan": raw.get("week_plan"),
+        }, "gemini"
+    except Exception as exc:
+        print(json.dumps({
+            "level": "ERROR",
+            "message": "coach_plan_generation_failed",
+            "provider": provider,
+            "error": f"{type(exc).__name__}: {exc}",
+        }))
+        return fallback_coach_response(plan), None, "fallback"

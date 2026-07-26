@@ -1,11 +1,13 @@
 import json
 import os
+import secrets
 import time
 import traceback
 from datetime import datetime, timezone
 from decimal import Decimal
 import boto3
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
 
 import exercise_plan
 import llm_client
@@ -481,21 +483,37 @@ def handle_onboarding(event):
     if body is None:
         return _response(400, {"error": "invalid_json"})
 
-    member_id = body.get("memberId")
-    if not member_id:
-        return _response(400, {"error": "memberId is required"})
-
+    requested_member_id = body.get("memberId")
     item = {
-        "memberId": member_id,
         "firstName": body.get("firstName", ""),
         "surname": body.get("surname", ""),
         "recoveryContext": body.get("recoveryContext", {}),
         "goals": body.get("goals", []),
+        "recoveryGoal": body.get("recoveryGoal"),
+        "activityBaseline": body.get("activityBaseline"),
         "activityPreference": body.get("activityPreference", "walk"),
         "createdAt": _now_iso(),
     }
-    members_table.put_item(Item=_to_dynamo(item))
-    return _response(201, {"memberId": member_id, "status": "created"})
+    # IDs are assigned centrally so members never have to invent one. The
+    # conditional write makes generation safe when two onboarding requests
+    # happen concurrently; a rare collision simply generates another number.
+    attempts = 1 if requested_member_id else 10
+    for _ in range(attempts):
+        member_id = requested_member_id or f"ENT{secrets.randbelow(1_000_000):06d}"
+        candidate = {**item, "memberId": member_id}
+        try:
+            members_table.put_item(
+                Item=_to_dynamo(candidate),
+                ConditionExpression="attribute_not_exists(memberId)",
+            )
+            return _response(201, {"memberId": member_id, "status": "created"})
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+                raise
+            if requested_member_id:
+                return _response(409, {"error": "member_already_exists", "memberId": member_id})
+
+    return _response(503, {"error": "member_id_generation_failed"})
 
 
 def handle_checkin(event):

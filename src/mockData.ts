@@ -46,6 +46,7 @@ export interface MemberProfile {
 export interface ActivityItem {
   sk: string;
   name: string;
+  durationMin?: number | null;
   calories: number | null;
   avgHr: number | null;
   date: string;
@@ -130,6 +131,7 @@ export interface RecoveryData {
   planEnvelope?: PlanEnvelope;
   recovery_score: number;
   recovery_label?: 'REDUCE' | 'MAINTAIN' | 'PROGRESS';
+  model_probabilities?: Partial<Record<'REDUCE' | 'MAINTAIN' | 'PROGRESS', number>>;
   readiness_score: number;
   recovery_stage: number;
   recovery_trend: string;
@@ -194,6 +196,7 @@ export const OPTIMAL_STATE: RecoveryData = {
   },
   recovery_score: 84.5,
   recovery_label: 'PROGRESS',
+  model_probabilities: { REDUCE: 0.08, MAINTAIN: 0.075, PROGRESS: 0.845 },
   readiness_score: 88.0,
   recovery_stage: 1,
   recovery_trend: "Optimal",

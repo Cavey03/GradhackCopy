@@ -169,6 +169,24 @@ interface BackendCheckIn {
   coach: BackendCoach;
 }
 
+export interface OnboardingProfile {
+  memberId?: string;
+  firstName: string;
+  surname: string;
+  recoveryGoal: string;
+  activityBaseline: string;
+  activityPreference: 'walk' | 'run' | 'swim';
+  recoveryContext: {
+    conditionCategory: string;
+    diagnosisOrEvent: string;
+    recoveryStage: string;
+    mobilityLimitation: string;
+    clinicianCleared: string;
+    contraindicationFlag: string;
+    painScore: number;
+  };
+}
+
 // Rewritten with the endpoint: /simulations no longer returns a hardcoded
 // comparison, it returns a verdict judged against the model's plan envelope.
 interface BackendSimulation {
@@ -271,6 +289,7 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
     return {
       sk: act.sk,
       name: act.workoutType ?? act.activityType ?? 'Workout',
+      durationMin: act.durationMin ?? act.durationMinutes ?? null,
       calories: act.caloriesBurned ?? null,
       avgHr: act.avgHeartRate ?? null,
       date: formattedDate,
@@ -380,6 +399,7 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
     // produced instead of one assembled from three of them.
     recovery_score: readinessClass.score,
     recovery_label: readinessClass.label,
+    model_probabilities: p.probabilities,
     readiness_score: p.readiness_score,
     recovery_stage: p.recovery_stage,
     recovery_trend: title(p.recovery_trend),
@@ -433,6 +453,25 @@ export async function fetchDashboardData(memberId: string): Promise<RecoveryData
       return OPTIMAL_STATE;
     }
     throw error;
+  }
+}
+
+export async function createMemberProfile(
+  profile: OnboardingProfile,
+): Promise<{ created: boolean; memberId?: string; error?: string }> {
+  try {
+    const response = await request<{ memberId: string; status: 'created' }>(
+      'POST',
+      '/onboarding',
+      {
+        ...profile,
+        goals: [profile.recoveryGoal],
+      },
+    );
+    return { created: response.status === 'created', memberId: response.memberId };
+  } catch (error) {
+    console.warn('⚠️ Member onboarding failed.', error);
+    return { created: false, error: 'Could not create this recovery profile.' };
   }
 }
 
@@ -498,6 +537,7 @@ export async function submitCheckIn(
         coachSource: p.coach_source ?? 'fallback',
         recovery_score: readinessClass.score,
         recovery_label: readinessClass.label,
+        model_probabilities: p.probabilities,
         readiness_score: p.readiness_score,
         recovery_stage: p.recovery_stage,
         recovery_trend: title(p.recovery_trend),

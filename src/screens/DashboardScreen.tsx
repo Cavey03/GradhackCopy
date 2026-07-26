@@ -1,7 +1,7 @@
 // src/screens/DashboardScreen.tsx
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
-import { OPTIMAL_STATE, RecoveryData } from '../mockData';
+import { OPTIMAL_STATE, RecoveryData, ActivityItem } from '../mockData';
 import { fetchDashboardData, submitCheckIn, submitExerciseLog, generatePlan } from '../api';
 import { 
   ShieldCheck, 
@@ -14,7 +14,15 @@ import {
   Heart,
   LogOut,
   User,
-  Plus
+  Plus,
+  Trophy,
+  Flame,
+  Target,
+  CalendarDays,
+  CheckCircle2,
+  Circle,
+  Bell,
+  X,
 } from 'lucide-react-native';
 import TrendChart from '../components/TrendChart';
 import DailyCheckInModal from '../components/DailyCheckInModal';
@@ -27,6 +35,228 @@ type CategoryType = 'Recovery' | 'Strain' | 'Sleep' | 'Heart' | 'AI Plan' | 'Pro
 // carry the backend's raw vocabulary ("very_low", "mobility").
 const titleCase = (s: string) =>
   (s || '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function activityProgress(activities: ActivityItem[] = []) {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const todayMs = today.getTime();
+  const dates = new Set(
+    activities
+      .map((activity) => activity.date)
+      .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)),
+  );
+  const lastSeven = activities.filter((activity) => {
+    const time = Date.parse(`${activity.date}T00:00:00Z`);
+    return Number.isFinite(time) && time <= todayMs && time >= todayMs - 6 * DAY_MS;
+  });
+
+  // A streak remains active through the day after the last session, so a
+  // member is not shown "0 days" first thing in the morning.
+  let cursor = todayMs;
+  if (!dates.has(new Date(cursor).toISOString().slice(0, 10))) cursor -= DAY_MS;
+  let streakDays = 0;
+  while (dates.has(new Date(cursor).toISOString().slice(0, 10))) {
+    streakDays += 1;
+    cursor -= DAY_MS;
+  }
+
+  const sessionTarget = lastSeven.length < 3 ? 3 : lastSeven.length < 5 ? 5 : 7;
+  const latestActivityTime = activities
+    .map((activity) => Date.parse(`${activity.date}T00:00:00Z`))
+    .filter((time) => Number.isFinite(time) && time <= todayMs)
+    .sort((a, b) => b - a)[0];
+  return {
+    streakDays,
+    sessions: lastSeven.length,
+    activeDays: new Set(lastSeven.map((activity) => activity.date)).size,
+    minutes: Math.round(lastSeven.reduce((sum, activity) => sum + (activity.durationMin ?? 0), 0)),
+    sessionTarget,
+    daysSinceLastActivity:
+      latestActivityTime == null ? null : Math.floor((todayMs - latestActivityTime) / DAY_MS),
+  };
+}
+
+type ContextualNudge = {
+  id: string;
+  title: string;
+  message: string;
+  tone: 'warning' | 'encouraging' | 'info';
+  action: 'checkin' | 'plan';
+  actionLabel: string;
+};
+
+function contextualNudges(
+  data: RecoveryData,
+  progress: ReturnType<typeof activityProgress>,
+): ContextualNudge[] {
+  const nudges: ContextualNudge[] = [];
+  const pain = data.planEnvelope?.anchor?.reported_pain;
+
+  if (typeof pain === 'number' && pain >= 4) {
+    nudges.push({
+      id: 'pain-checkin',
+      title: 'Your pain signal needs attention',
+      message: `Your latest reported pain is ${pain}/10. Check in again before following the next session recommendation.`,
+      tone: 'warning',
+      action: 'checkin',
+      actionLabel: 'Check in now',
+    });
+  } else if (data.setback_probability >= 0.4) {
+    nudges.push({
+      id: 'recovery-risk',
+      title: 'Recovery signals favour less load',
+      message: `The model currently assigns ${Math.round(data.setback_probability * 100)}% to Reduce. Update how you feel before progressing.`,
+      tone: 'warning',
+      action: 'checkin',
+      actionLabel: 'Update check-in',
+    });
+  }
+
+  if (progress.sessions === 0) {
+    nudges.push({
+      id: 'restart-plan',
+      title: 'Restart with the plan, not guesswork',
+      message:
+        progress.daysSinceLastActivity == null
+          ? 'No recent session is recorded. Review your safe starting session when you are ready.'
+          : `It has been ${progress.daysSinceLastActivity} ${progress.daysSinceLastActivity === 1 ? 'day' : 'days'} since your last recorded session. Review the current plan before restarting.`,
+      tone: 'info',
+      action: 'plan',
+      actionLabel: 'View safe plan',
+    });
+  } else if (progress.sessionTarget - progress.sessions === 1) {
+    nudges.push({
+      id: `milestone-${progress.sessionTarget}`,
+      title: 'One session from your next milestone',
+      message: `Complete one more planned session to reach ${progress.sessionTarget} this week—only if today’s recovery recommendation supports it.`,
+      tone: 'encouraging',
+      action: 'plan',
+      actionLabel: 'View today’s plan',
+    });
+  } else if (progress.streakDays >= 3) {
+    nudges.push({
+      id: 'streak',
+      title: `${progress.streakDays}-day consistency streak`,
+      message: 'Consistency is building. Keep the next session inside the current duration and intensity limits.',
+      tone: 'encouraging',
+      action: 'plan',
+      actionLabel: 'Review limits',
+    });
+  }
+
+  if (
+    nudges.length < 2 &&
+    data.vo2_predicted_change != null &&
+    data.vo2_predicted_change > 0
+  ) {
+    nudges.push({
+      id: 'vo2-outlook',
+      title: 'Your VO₂ outlook has positive momentum',
+      message: `The four-session outlook is +${data.vo2_predicted_change} mL/kg/min. Consistent, recovery-appropriate sessions give you the best chance of following that direction.`,
+      tone: 'info',
+      action: 'plan',
+      actionLabel: 'See progression',
+    });
+  }
+
+  return nudges.slice(0, 2);
+}
+
+function fourWeekOverview(data: RecoveryData, progress: ReturnType<typeof activityProgress>) {
+  const activeDays = (data.weekPlan ?? []).filter(
+    (day) => day.activity !== 'rest' && day.durationMinutes > 0,
+  );
+  const weekMinutes = activeDays.reduce((sum, day) => sum + day.durationMinutes, 0);
+  const permitted = data.planEnvelope?.allowed_activities.map(titleCase).join(', ');
+  const plannedSessions = activeDays.length;
+  const completionTarget = plannedSessions ? Math.max(1, Math.ceil(plannedSessions * 0.75)) : 0;
+  const completionMet = progress.sessions >= completionTarget;
+  const pain = data.planEnvelope?.anchor?.reported_pain;
+  const painMet = typeof pain === 'number' && pain <= 3;
+  const readinessMet = data.recovery_label !== 'REDUCE';
+  const riskMet = data.setback_probability < 0.4;
+  const vo2Met = data.vo2_predicted_change == null || data.vo2_predicted_change >= 0;
+  const week2Eligible = completionMet && painMet && readinessMet;
+  const week3Eligible = week2Eligible && riskMet && vo2Met;
+
+  return [
+    {
+      week: 1,
+      title: 'Current validated plan',
+      detail: activeDays.length
+        ? `${activeDays.length} movement ${activeDays.length === 1 ? 'day' : 'days'} · ${weekMinutes} planned minutes`
+        : 'Recovery week · no training load currently prescribed',
+      status: 'CURRENT',
+      checks: plannedSessions
+        ? [
+            {
+              met: completionMet,
+              label: `${Math.min(progress.sessions, completionTarget)} of ${completionTarget} sessions completed`,
+            },
+          ]
+        : [{ met: true, label: 'Recovery week acknowledged' }],
+    },
+    {
+      week: 2,
+      title: 'Consistency checkpoint',
+      detail: week2Eligible
+        ? 'Current signals support generating the next validated week.'
+        : 'Complete the gates below before training load can progress.',
+      status: week2Eligible ? 'ELIGIBLE' : 'LOCKED',
+      checks: [
+        {
+          met: completionMet,
+          label: plannedSessions
+            ? `Complete at least ${completionTarget} of ${plannedSessions} planned sessions`
+            : 'Follow the prescribed recovery week',
+        },
+        {
+          met: painMet,
+          label: typeof pain === 'number' ? `Pain remains at or below 3/10 · now ${pain}/10` : 'Submit a check-in to confirm pain ≤ 3/10',
+        },
+        { met: readinessMet, label: `Readiness is Maintain or Progress · now ${titleCase(data.recovery_label || 'Unknown')}` },
+      ],
+    },
+    {
+      week: 3,
+      title: 'Activity development',
+      detail: week3Eligible
+        ? `Eligible for reassessment within supported activities: ${permitted || 'next validated options'}.`
+        : 'Progression remains gated by recovery risk and aerobic direction.',
+      status: week3Eligible ? 'ELIGIBLE' : 'LOCKED',
+      checks: [
+        { met: week2Eligible, label: 'Week 2 gates remain satisfied' },
+        {
+          met: riskMet,
+          label: `Setback risk below 40% · now ${Math.round(data.setback_probability * 100)}%`,
+        },
+        {
+          met: vo2Met,
+          label:
+            data.vo2_predicted_change == null
+              ? 'No declining VO₂ forecast detected'
+              : `VO₂ outlook stable or improving · ${data.vo2_predicted_change >= 0 ? '+' : ''}${data.vo2_predicted_change}`,
+        },
+      ],
+    },
+    {
+      week: 4,
+      title: 'Consolidate and reassess VO₂',
+      detail:
+        data.vo2_forecast_4_weeks != null
+          ? `Compare a new measurement with the current ${data.vo2_max_current} mL/kg/min baseline and the ${data.vo2_forecast_4_weeks} model outlook.`
+          : 'Capture a new VO₂ estimate and rebuild the next progression phase.',
+      status: 'REASSESS',
+      checks: [
+        { met: false, label: 'Complete the newly validated sessions' },
+        { met: false, label: 'Capture a new VO₂ measurement' },
+        { met: false, label: 'Generate the next recovery phase' },
+      ],
+    },
+  ];
+}
 
 /**
  * One label/value line in the profile. Renders nothing at all when the value
@@ -67,6 +297,7 @@ export default function DashboardScreen({ navigation, route }: any) {
   const [activeCategory, setActiveCategory] = useState<CategoryType>('Recovery');
   const [checkInVisible, setCheckInVisible] = useState(false);
   const [logDrawerVisible, setLogDrawerVisible] = useState(false);
+  const [dismissedNudges, setDismissedNudges] = useState<string[]>([]);
 
   // "Optimal" vs "at risk" is derived directly from the data
   const isOptimal = data.setback_probability < 0.4;
@@ -77,6 +308,23 @@ export default function DashboardScreen({ navigation, route }: any) {
   const hasVo2Comparison =
     (data.vo2ReadingCount ?? 0) >= 2 && data.vo2BaselineDate !== data.vo2CurrentDate;
   const vo2Delta = Math.round((data.vo2_max_current - data.vo2_max_baseline) * 10) / 10;
+  const recommendationProbabilities = (['REDUCE', 'MAINTAIN', 'PROGRESS'] as const)
+    .map((label) => ({
+      label,
+      value: data.model_probabilities?.[label],
+    }))
+    .filter((item): item is { label: 'REDUCE' | 'MAINTAIN' | 'PROGRESS'; value: number } =>
+      typeof item.value === 'number',
+    )
+    .sort((a, b) => b.value - a.value);
+  const secondaryRecommendations = recommendationProbabilities
+    .filter(({ label }) => label !== data.recovery_label)
+    .slice(0, 2);
+  const progress = activityProgress(data.recentActivities);
+  const nudges = contextualNudges(data, progress).filter(
+    (nudge) => !dismissedNudges.includes(nudge.id),
+  );
+  const progressionOverview = fourWeekOverview(data, progress);
 
   // If Login didn't pass data (e.g. deep link during dev), fetch it live
   useEffect(() => {
@@ -274,7 +522,182 @@ export default function DashboardScreen({ navigation, route }: any) {
                 label={data.recovery_label}
                 isOptimal={isOptimal}
               />
+              {secondaryRecommendations.length > 0 && (
+                <View style={styles.secondaryOutcomeRow}>
+                  {secondaryRecommendations.map(({ label, value }) => {
+                    const color =
+                      label === 'REDUCE' ? '#DC2626' : label === 'PROGRESS' ? '#16A34A' : '#D97706';
+                    const background =
+                      label === 'REDUCE' ? '#FEF2F2' : label === 'PROGRESS' ? '#F0FDF4' : '#FFFBEB';
+                    const copy =
+                      label === 'REDUCE'
+                        ? 'Reduce activity signal'
+                        : label === 'PROGRESS'
+                          ? 'Progress potential'
+                          : 'Maintain current load';
+                    return (
+                      <View
+                        key={label}
+                        style={[styles.secondaryOutcome, { backgroundColor: background }]}
+                      >
+                        <Text style={[styles.secondaryOutcomeValue, { color }]}>
+                          {Math.round(value * 100)}%
+                        </Text>
+                        <Text style={styles.secondaryOutcomeLabel}>{titleCase(label)}</Text>
+                        <Text style={styles.secondaryOutcomeCopy}>{copy}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+              <Text style={styles.outcomeHierarchyNote}>
+                The ring shows the most likely recommendation. The other model outcomes are shown below.
+              </Text>
               <Text style={styles.aiSummary}>{data.ai_summary}</Text>
+              <View style={styles.confidenceExplanation}>
+                <Text style={styles.confidenceTitle}>
+                  Why {Math.round(data.recovery_score)}%?
+                </Text>
+                <Text style={styles.confidenceBody}>
+                  The model compared all three options using your recent health and activity signals.
+                  {' '}{titleCase(data.recovery_label || 'Maintain')} received the highest estimated likelihood.
+                </Text>
+                <View style={styles.signalSummary}>
+                  <Text style={styles.signalSummaryTitle}>Signals behind this recommendation</Text>
+                  <View style={styles.signalRow}>
+                    <Text style={styles.signalLabel}>Most influential</Text>
+                    <Text style={styles.signalValue}>{data.explainability.primary_factor}</Text>
+                  </View>
+                  <View style={styles.signalRow}>
+                    <Text style={styles.signalLabel}>Resting heart rate</Text>
+                    <Text style={styles.signalValue}>{data.explainability.resting_hr_delta}</Text>
+                  </View>
+                  <View style={styles.signalRow}>
+                    <Text style={styles.signalLabel}>Sleep shortfall</Text>
+                    <Text style={styles.signalValue}>{data.explainability.sleep_debt}</Text>
+                  </View>
+                  <View style={[styles.signalRow, styles.signalRowLast]}>
+                    <Text style={styles.signalLabel}>Recent training</Text>
+                    <Text style={styles.signalValue}>{data.explainability.training_load_7d}</Text>
+                  </View>
+                </View>
+                <Text style={styles.confidenceNote}>
+                  These are recommendation probabilities, not guarantees of improvement, injury, or an overall health score.
+                </Text>
+              </View>
+            </View>
+
+            {nudges.length > 0 && (
+              <View style={styles.card}>
+                <View style={styles.nudgeHeader}>
+                  <View style={styles.cardHeaderRow}>
+                    <Bell size={17} color="#E11082" />
+                    <Text style={[styles.cardTitle, { marginLeft: 6 }]}>FOR YOU TODAY</Text>
+                  </View>
+                  <Text style={styles.nudgeContextLabel}>BASED ON YOUR LATEST DATA</Text>
+                </View>
+
+                {nudges.map((nudge) => {
+                  const toneColor =
+                    nudge.tone === 'warning'
+                      ? '#DC2626'
+                      : nudge.tone === 'encouraging'
+                        ? '#16A34A'
+                        : '#0284C7';
+                  const toneBackground =
+                    nudge.tone === 'warning'
+                      ? '#FEF2F2'
+                      : nudge.tone === 'encouraging'
+                        ? '#F0FDF4'
+                        : '#F0F9FF';
+                  return (
+                    <View
+                      key={nudge.id}
+                      style={[styles.nudgeBox, { backgroundColor: toneBackground }]}
+                    >
+                      <View style={styles.nudgeTitleRow}>
+                        <Text style={[styles.nudgeTitle, { color: toneColor }]}>{nudge.title}</Text>
+                        <TouchableOpacity
+                          accessibilityLabel={`Dismiss ${nudge.title}`}
+                          onPress={() =>
+                            setDismissedNudges((current) => [...current, nudge.id])
+                          }
+                          style={styles.nudgeDismiss}
+                        >
+                          <X size={14} color="#94A3B8" />
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={styles.nudgeMessage}>{nudge.message}</Text>
+                      <TouchableOpacity
+                        style={styles.nudgeAction}
+                        onPress={() =>
+                          nudge.action === 'checkin'
+                            ? setCheckInVisible(true)
+                            : setActiveCategory('AI Plan')
+                        }
+                      >
+                        <Text style={[styles.nudgeActionText, { color: toneColor }]}>
+                          {nudge.actionLabel} →
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            <View style={styles.card}>
+              <View style={styles.progressHeader}>
+                <View style={styles.cardHeaderRow}>
+                  <Trophy size={17} color="#D97706" />
+                  <Text style={[styles.cardTitle, { marginLeft: 6 }]}>YOUR PROGRESS</Text>
+                </View>
+                <Text style={styles.progressPeriod}>LAST 7 DAYS</Text>
+              </View>
+
+              <View style={styles.progressGrid}>
+                <View style={styles.progressMetric}>
+                  <Flame size={18} color="#E11082" />
+                  <Text style={styles.progressValue}>{progress.streakDays}</Text>
+                  <Text style={styles.progressLabel}>day streak</Text>
+                </View>
+                <View style={styles.progressMetric}>
+                  <Activity size={18} color="#00A3E0" />
+                  <Text style={styles.progressValue}>{progress.sessions}</Text>
+                  <Text style={styles.progressLabel}>sessions</Text>
+                </View>
+                <View style={styles.progressMetric}>
+                  <Target size={18} color="#10B981" />
+                  <Text style={styles.progressValue}>{progress.minutes}</Text>
+                  <Text style={styles.progressLabel}>active min</Text>
+                </View>
+              </View>
+
+              <View style={styles.milestoneBox}>
+                <View style={styles.milestoneCopy}>
+                  <Text style={styles.milestoneTitle}>
+                    {progress.sessions >= 7 ? 'Weekly milestone achieved!' : 'Next milestone'}
+                  </Text>
+                  <Text style={styles.milestoneText}>
+                    {progress.sessions >= 7
+                      ? `${progress.sessions} sessions across ${progress.activeDays} active days`
+                      : `${progress.sessionTarget - progress.sessions} more ${
+                          progress.sessionTarget - progress.sessions === 1 ? 'session' : 'sessions'
+                        } to reach ${progress.sessionTarget} this week`}
+                  </Text>
+                </View>
+                <Text style={styles.milestoneCount}>
+                  {Math.min(progress.sessions, progress.sessionTarget)}/{progress.sessionTarget}
+                </Text>
+              </View>
+              <View style={styles.milestoneTrack}>
+                <View
+                  style={[
+                    styles.milestoneFill,
+                    { width: `${Math.min(100, (progress.sessions / progress.sessionTarget) * 100)}%` },
+                  ]}
+                />
+              </View>
             </View>
 
             <View style={styles.card}>
@@ -336,24 +759,60 @@ export default function DashboardScreen({ navigation, route }: any) {
               {/* The model's actual contribution, kept separate from measured
                   history because only this line is a prediction. */}
               {data.vo2_forecast_4_weeks != null && (
-                <View style={styles.forecastBox}>
-                  <Text style={styles.forecastLabel}>MODEL FORECAST · 4 SESSIONS AHEAD</Text>
-                  <View style={styles.forecastRow}>
-                    <Text style={styles.forecastValue}>{data.vo2_forecast_4_weeks}</Text>
-                    {data.vo2_predicted_change != null && (
+                <View style={styles.vo2GoalBox}>
+                  <View style={styles.vo2GoalHeader}>
+                    <View>
+                      <Text style={styles.vo2GoalEyebrow}>YOUR VO₂ GOAL</Text>
+                      <Text style={styles.vo2GoalTitle}>Next 4 completed sessions</Text>
+                    </View>
+                    <Target size={20} color="#0369A1" />
+                  </View>
+
+                  <View style={styles.vo2GoalValues}>
+                    <View style={styles.vo2GoalMetric}>
+                      <Text style={styles.vo2GoalMetricLabel}>Latest measured</Text>
+                      <Text style={styles.vo2GoalCurrent}>{data.vo2_max_current}</Text>
+                    </View>
+                    <Text style={styles.vo2GoalArrow}>→</Text>
+                    <View style={[styles.vo2GoalMetric, { alignItems: 'flex-end' }]}>
+                      <Text style={styles.vo2GoalMetricLabel}>Model outlook</Text>
+                      <Text style={styles.vo2GoalTarget}>{data.vo2_forecast_4_weeks}</Text>
+                    </View>
+                  </View>
+
+                  {data.vo2_predicted_change != null && (
+                    <View
+                      style={[
+                        styles.vo2ChangePill,
+                        {
+                          backgroundColor:
+                            data.vo2_predicted_change >= 0 ? '#DCFCE7' : '#FEF3C7',
+                        },
+                      ]}
+                    >
                       <Text
                         style={[
-                          styles.forecastChange,
-                          { marginLeft: 10, color: data.vo2_predicted_change >= 0 ? '#10B981' : '#DC2626' },
+                          styles.vo2ChangePillText,
+                          { color: data.vo2_predicted_change >= 0 ? '#15803D' : '#A16207' },
                         ]}
                       >
                         {data.vo2_predicted_change >= 0 ? '+' : ''}
-                        {data.vo2_predicted_change} mL/kg/min
+                        {data.vo2_predicted_change} mL/kg/min expected
                       </Text>
-                    )}
+                    </View>
+                  )}
+
+                  <View style={styles.vo2PlanLink}>
+                    <Text style={styles.vo2PlanLinkTitle}>How today supports this goal</Text>
+                    <Text style={styles.vo2PlanLinkText}>
+                      {data.duration_minutes === 0 || data.recommended_activity.toLowerCase() === 'rest'
+                        ? 'Today is a recovery day. Protecting recovery now supports safer aerobic progression in your next sessions.'
+                        : `Your ${data.duration_minutes}-minute ${data.intensity.toLowerCase()} ${data.recommended_activity.toLowerCase()} builds aerobic consistency while staying inside your current recovery limits.`}
+                    </Text>
                   </View>
-                  <Text style={styles.forecastDisclaimer}>
-                    Forecast only — not an achieved measurement.
+                  <Text style={styles.vo2GoalDisclaimer}>
+                    This is a model outlook, not a guaranteed result or an achieved measurement.
+                    It updates as new activity and recovery data arrives.
                   </Text>
                 </View>
               )}
@@ -776,6 +1235,83 @@ export default function DashboardScreen({ navigation, route }: any) {
                   </View>
                 )}
 
+                <View style={styles.card}>
+                  <View style={styles.progressionHeader}>
+                    <View style={styles.cardHeaderRow}>
+                      <CalendarDays size={17} color="#6366F1" />
+                      <Text style={[styles.cardTitle, { marginLeft: 6 }]}>4-WEEK PROGRESSION</Text>
+                    </View>
+                    <Text style={styles.progressionAdaptive}>ADAPTIVE</Text>
+                  </View>
+                  <Text style={styles.progressionIntro}>
+                    Progression is earned through plan completion and recovery signals. Meeting a
+                    gate makes the next stage eligible for a new plan—it never increases load automatically.
+                  </Text>
+
+                  {progressionOverview.map((item, index) => (
+                    <View key={item.week} style={styles.progressionRow}>
+                      <View style={styles.progressionRail}>
+                        <View
+                          style={[
+                            styles.progressionDot,
+                            item.status === 'CURRENT' && styles.progressionDotCurrent,
+                            item.status === 'ELIGIBLE' && styles.progressionDotEligible,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.progressionDotText,
+                              item.status === 'CURRENT' && styles.progressionDotTextCurrent,
+                              item.status === 'ELIGIBLE' && styles.progressionDotTextEligible,
+                            ]}
+                          >
+                            {item.week}
+                          </Text>
+                        </View>
+                        {index < progressionOverview.length - 1 && (
+                          <View style={styles.progressionLine} />
+                        )}
+                      </View>
+                      <View style={styles.progressionBody}>
+                        <View style={styles.progressionTitleRow}>
+                          <Text style={styles.progressionTitle}>{item.title}</Text>
+                          <Text
+                            style={[
+                              styles.progressionStatus,
+                              item.status === 'CURRENT' && styles.progressionStatusCurrent,
+                              item.status === 'ELIGIBLE' && styles.progressionStatusEligible,
+                            ]}
+                          >
+                            {item.status}
+                          </Text>
+                        </View>
+                        <Text style={styles.progressionDetail}>{item.detail}</Text>
+                        <View style={styles.gateList}>
+                          {item.checks.map((check) => (
+                            <View key={check.label} style={styles.gateRow}>
+                              {check.met ? (
+                                <CheckCircle2 size={13} color="#16A34A" />
+                              ) : (
+                                <Circle size={13} color="#CBD5E1" />
+                              )}
+                              <Text style={[styles.gateText, check.met && styles.gateTextMet]}>
+                                {check.label}
+                              </Text>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    </View>
+                  ))}
+
+                  <View style={styles.progressionSafetyNote}>
+                    <ShieldCheck size={14} color="#15803D" />
+                    <Text style={styles.progressionSafetyText}>
+                      Eligible means ready for reassessment. Only a newly validated plan can prescribe the next week.
+                    </Text>
+                  </View>
+                </View>
+
                 {/* PROVISIONAL WEEK */}
                 {!!data.weekPlan?.length && (
                   <View style={styles.card}>
@@ -922,6 +1458,137 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 11, fontWeight: '800', color: '#64748B', letterSpacing: 1 },
   cardTitleLight: { fontSize: 11, fontWeight: '800', color: 'rgba(255, 255, 255, 0.7)', letterSpacing: 1 },
   aiSummary: { fontSize: 14, color: '#334155', marginTop: 12, fontWeight: '500', lineHeight: 22 },
+  secondaryOutcomeRow: {
+    flexDirection: 'row',
+    marginHorizontal: -4,
+    marginTop: 12,
+  },
+  secondaryOutcome: {
+    flex: 1,
+    marginHorizontal: 4,
+    borderRadius: 13,
+    paddingVertical: 11,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+  },
+  secondaryOutcomeValue: { fontSize: 22, fontWeight: '900' },
+  secondaryOutcomeLabel: { fontSize: 10, color: '#002B49', fontWeight: '900', marginTop: 2 },
+  secondaryOutcomeCopy: {
+    fontSize: 9,
+    color: '#64748B',
+    lineHeight: 13,
+    textAlign: 'center',
+    marginTop: 2,
+  },
+  outcomeHierarchyNote: {
+    fontSize: 9,
+    color: '#64748B',
+    lineHeight: 14,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  confidenceExplanation: {
+    marginTop: 16,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+  },
+  confidenceTitle: { fontSize: 13, fontWeight: '900', color: '#002B49' },
+  confidenceBody: { fontSize: 12, color: '#475569', lineHeight: 18, marginTop: 5 },
+  signalSummary: {
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  signalSummaryTitle: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#64748B',
+    letterSpacing: 0.7,
+    textTransform: 'uppercase',
+    marginBottom: 9,
+  },
+  signalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingBottom: 8,
+    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+  },
+  signalRowLast: { paddingBottom: 0, marginBottom: 0, borderBottomWidth: 0 },
+  signalLabel: { flex: 1, fontSize: 11, color: '#64748B', fontWeight: '600' },
+  signalValue: {
+    flex: 1.4,
+    fontSize: 11,
+    color: '#002B49',
+    fontWeight: '800',
+    textAlign: 'right',
+  },
+  confidenceNote: { fontSize: 10, color: '#64748B', lineHeight: 15, marginTop: 3, fontStyle: 'italic' },
+  progressHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  progressPeriod: { fontSize: 9, color: '#94A3B8', fontWeight: '900', letterSpacing: 0.7 },
+  progressGrid: { flexDirection: 'row', marginHorizontal: -4 },
+  progressMetric: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    marginHorizontal: 4,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  progressValue: { fontSize: 22, fontWeight: '900', color: '#002B49', marginTop: 4 },
+  progressLabel: { fontSize: 10, color: '#64748B', fontWeight: '700', marginTop: 1 },
+  milestoneBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  milestoneCopy: { flex: 1, paddingRight: 12 },
+  milestoneTitle: { fontSize: 12, fontWeight: '900', color: '#002B49' },
+  milestoneText: { fontSize: 11, color: '#64748B', lineHeight: 16, marginTop: 2 },
+  milestoneCount: { fontSize: 13, fontWeight: '900', color: '#E11082' },
+  milestoneTrack: {
+    height: 7,
+    borderRadius: 999,
+    backgroundColor: '#F1F5F9',
+    overflow: 'hidden',
+    marginTop: 9,
+  },
+  milestoneFill: { height: '100%', borderRadius: 999, backgroundColor: '#E11082' },
+  nudgeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 11,
+  },
+  nudgeContextLabel: { fontSize: 8, color: '#94A3B8', fontWeight: '900', letterSpacing: 0.5 },
+  nudgeBox: { borderRadius: 13, padding: 13, marginTop: 8 },
+  nudgeTitleRow: { flexDirection: 'row', alignItems: 'flex-start' },
+  nudgeTitle: { flex: 1, fontSize: 13, fontWeight: '900', paddingRight: 8 },
+  nudgeDismiss: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: -5,
+    marginRight: -5,
+  },
+  nudgeMessage: { fontSize: 11, color: '#475569', lineHeight: 17, marginTop: 4 },
+  nudgeAction: { alignSelf: 'flex-start', paddingTop: 9, paddingBottom: 1 },
+  nudgeActionText: { fontSize: 11, fontWeight: '900' },
   
   metricRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16, paddingHorizontal: 8 },
   metricBox: { flex: 1, alignItems: 'center' },
@@ -932,6 +1599,55 @@ const styles = StyleSheet.create({
   forecastValue: { fontSize: 24, fontWeight: '900', color: '#002B49', marginTop: 5 },
   forecastChange: { fontSize: 13, fontWeight: '800', marginTop: 4 },
   forecastDisclaimer: { fontSize: 11, color: '#64748B', marginTop: 6, fontStyle: 'italic' },
+  vo2GoalBox: {
+    marginTop: 18,
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+  },
+  vo2GoalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  vo2GoalEyebrow: { fontSize: 10, color: '#0369A1', fontWeight: '900', letterSpacing: 0.9 },
+  vo2GoalTitle: { fontSize: 12, color: '#64748B', fontWeight: '600', marginTop: 2 },
+  vo2GoalValues: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 16,
+  },
+  vo2GoalMetric: { flex: 1 },
+  vo2GoalMetricLabel: { fontSize: 10, color: '#64748B', fontWeight: '700' },
+  vo2GoalCurrent: { fontSize: 27, color: '#002B49', fontWeight: '900', marginTop: 2 },
+  vo2GoalTarget: { fontSize: 27, color: '#0369A1', fontWeight: '900', marginTop: 2 },
+  vo2GoalArrow: { fontSize: 22, color: '#7DD3FC', fontWeight: '700', marginHorizontal: 12 },
+  vo2ChangePill: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingVertical: 5,
+    paddingHorizontal: 9,
+    marginTop: 12,
+  },
+  vo2ChangePillText: { fontSize: 10, fontWeight: '900' },
+  vo2PlanLink: {
+    paddingTop: 12,
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#BAE6FD',
+  },
+  vo2PlanLinkTitle: { fontSize: 11, color: '#002B49', fontWeight: '900' },
+  vo2PlanLinkText: { fontSize: 11, color: '#475569', lineHeight: 17, marginTop: 3 },
+  vo2GoalDisclaimer: {
+    fontSize: 9,
+    color: '#64748B',
+    fontStyle: 'italic',
+    lineHeight: 14,
+    marginTop: 10,
+  },
   
   highlightCard: { backgroundColor: '#002B49', borderColor: '#001A2C' },
   planTitle: { fontSize: 22, fontWeight: '900', color: '#FFFFFF', marginTop: 8, letterSpacing: -0.5 },
@@ -1021,6 +1737,79 @@ const styles = StyleSheet.create({
   envLabel: { fontSize: 12, color: '#64748B', fontWeight: '600' },
   envVal: { fontSize: 13, color: '#002B49', fontWeight: '800', flexShrink: 1, textAlign: 'right' },
   planSourceNote: { fontSize: 11, color: '#64748B', marginTop: 12, fontWeight: '700' },
+
+  // --- four-week adaptive progression ---
+  progressionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  progressionAdaptive: {
+    fontSize: 9,
+    color: '#6366F1',
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    backgroundColor: '#EEF2FF',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    overflow: 'hidden',
+  },
+  progressionIntro: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 18,
+    marginTop: 8,
+    marginBottom: 14,
+  },
+  progressionRow: { flexDirection: 'row', minHeight: 76 },
+  progressionRail: { width: 34, alignItems: 'center' },
+  progressionDot: {
+    width: 27,
+    height: 27,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  progressionDotCurrent: { backgroundColor: '#6366F1', borderColor: '#6366F1' },
+  progressionDotEligible: { backgroundColor: '#DCFCE7', borderColor: '#16A34A' },
+  progressionDotText: { fontSize: 10, color: '#64748B', fontWeight: '900' },
+  progressionDotTextCurrent: { color: '#FFFFFF' },
+  progressionDotTextEligible: { color: '#15803D' },
+  progressionLine: { width: 2, flex: 1, backgroundColor: '#E2E8F0', marginVertical: 3 },
+  progressionBody: { flex: 1, paddingLeft: 7, paddingBottom: 15 },
+  progressionTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  progressionTitle: { flex: 1, fontSize: 13, color: '#002B49', fontWeight: '900', paddingRight: 8 },
+  progressionStatus: { fontSize: 8, color: '#94A3B8', fontWeight: '900', letterSpacing: 0.5 },
+  progressionStatusCurrent: { color: '#6366F1' },
+  progressionStatusEligible: { color: '#15803D' },
+  progressionDetail: { fontSize: 11, color: '#64748B', lineHeight: 17, marginTop: 3 },
+  gateList: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    marginTop: 8,
+  },
+  gateRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 4 },
+  gateText: { flex: 1, fontSize: 10, color: '#64748B', lineHeight: 15, marginLeft: 7 },
+  gateTextMet: { color: '#166534', fontWeight: '700' },
+  progressionSafetyNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F0FDF4',
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 2,
+  },
+  progressionSafetyText: { flex: 1, fontSize: 10, color: '#166534', lineHeight: 15, marginLeft: 7 },
 
   // --- provisional week ---
   weekNote: { fontSize: 12, color: '#64748B', lineHeight: 17, marginTop: 6, marginBottom: 12 },

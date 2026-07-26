@@ -95,6 +95,13 @@ export default function LoginScreen({ navigation, route }: any) {
               </>
             )}
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.onboardingBtn}
+            onPress={() => navigation.navigate('Onboarding')}
+          >
+            <Text style={styles.onboardingBtnText}>New member? Create a recovery profile</Text>
+          </TouchableOpacity>
         </View>
 
         <Text style={styles.demoHint}>
@@ -129,6 +136,8 @@ const styles = StyleSheet.create({
   primaryBtn: { backgroundColor: '#E11082', flexDirection: 'row', paddingVertical: 16, borderRadius: 14, justifyContent: 'center', alignItems: 'center', ...Platform.select({ ios: { shadowColor: '#E11082', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8 }, android: { elevation: 3 } }) },
   primaryBtnDisabled: { backgroundColor: '#CBD5E1', shadowOpacity: 0, elevation: 0 },
   primaryBtnText: { color: '#FFF', fontSize: 15, fontWeight: '800', letterSpacing: 0.5 },
+  onboardingBtn: { alignItems: 'center', paddingTop: 16, paddingHorizontal: 8 },
+  onboardingBtnText: { color: '#0369A1', fontSize: 12, fontWeight: '800' },
 
   demoHint: { textAlign: 'center', fontSize: 12, color: '#94A3B8', marginTop: 24, fontStyle: 'italic' },
 });

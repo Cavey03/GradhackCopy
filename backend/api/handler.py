@@ -42,6 +42,29 @@ def _latest_item(member_id, type_prefix):
     return items[0] if items else None
 
 
+def _recent_non_future_items(member_id, type_prefix, limit=7):
+    """Return recent history without legacy simulator records dated ahead.
+
+    Older versions of the recovery simulator advanced from today into the
+    future. Those records sort ahead of genuine/current history in DynamoDB,
+    so a query with ``Limit=7`` can permanently hide every new session behind
+    seven stale demo items. Read a bounded window first, discard future-dated
+    sort keys, and only then apply the display limit.
+    """
+    items = timeseries_table.query(
+        KeyConditionExpression=Key("memberId").eq(member_id)
+        & Key("sk").begins_with(f"{type_prefix}#"),
+        ScanIndexForward=False,
+        Limit=50,
+    ).get("Items", [])
+    today = datetime.now(timezone.utc).date().isoformat()
+    prefix_length = len(type_prefix) + 1
+    return [
+        item for item in items
+        if str(item.get("sk", ""))[prefix_length:prefix_length + 10] <= today
+    ][:limit]
+
+
 def handle_dashboard(event):
     params = event.get("queryStringParameters") or {}
     member_id = params.get("memberId")
@@ -60,20 +83,10 @@ def handle_dashboard(event):
     prediction = latest_prediction or get_prediction(member_id)
 
     # Newest wearable readings (sleep, HR, VO2) so the app can show real data
-    readings = timeseries_table.query(
-        KeyConditionExpression=Key("memberId").eq(member_id)
-        & Key("sk").begins_with("READING#"),
-        ScanIndexForward=False,
-        Limit=7,
-    ).get("Items", [])
+    readings = _recent_non_future_items(member_id, "READING")
 
     # Newest workouts for the strain view
-    activities = timeseries_table.query(
-        KeyConditionExpression=Key("memberId").eq(member_id)
-        & Key("sk").begins_with("ACTIVITY#"),
-        ScanIndexForward=False,
-        Limit=7,
-    ).get("Items", [])
+    activities = _recent_non_future_items(member_id, "ACTIVITY")
 
     # Oldest reading = the member's VO2 baseline point
     oldest = timeseries_table.query(

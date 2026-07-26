@@ -586,6 +586,7 @@ export interface ExerciseLog {
   // Perceived exertion, 1-10. A real model feature (RPE 1-10 and its rolling
   // mean), so a logged session that omits it gets a median imputed instead.
   rpe?: number;
+  calories?: number;
   // Only the demo simulator sets it, so a simulated workout lands on the same
   // simulated day as its reading and check-in rather than on today.
   timestamp?: string;
@@ -615,6 +616,7 @@ export async function submitExerciseLog(
       avgHeartRate: log.avgHr,
       maxHeartRate: log.maxHr,
       ...(log.rpe != null ? { perceivedExertion: log.rpe, rpe: log.rpe } : {}),
+      ...(log.calories != null ? { caloriesBurned: log.calories } : {}),
       ...(log.timestamp ? { timestamp: log.timestamp } : {}),
       completed: true,
     });

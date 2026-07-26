@@ -136,13 +136,46 @@ export default function WearableSimulatorModal({
   // this is the baseline itself.
   const previous = useMemo(() => applyScenario(start, scenario, step - 1), [start, scenario, step]);
 
-  // Advance the date so each step extends the trend rather than overwriting
-  // the same day; rolling 3-session features need distinct dates.
+  // Each step gets its own date so the trend has distinct sessions — rolling
+  // 3-session features need them — but the run *ends* on today rather than
+  // starting there.
+  //
+  // It used to write today + step days, i.e. into the future, and that quietly
+  // ruined the member for everything afterwards: inference keys sessions by
+  // date, so a real check-in dated now landed on an older session than the
+  // simulated ones and never reached the model. Members demoed on carried
+  // readings dated weeks ahead and stopped responding to check-ins entirely.
+  //
+  // Counting backwards from today instead means the run reads as the member's
+  // recent history, the last step lands on today, and nothing is ever written
+  // ahead of it. Beyond step 7 the offset clamps at 0 and stays on today.
   const stamp = useMemo(() => {
     const d = new Date();
-    d.setDate(d.getDate() + step * cadence);
+    d.setDate(d.getDate() - Math.max(0, (6 - (step - 1)) * cadence));
     return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
   }, [step, cadence]);
+
+  // Plausible telemetry for the simulated session, derived from the scenario
+  // rather than sent empty. Without these the Strain view shows a workout with
+  // "— kcal / — bpm / — km" beside the member's seeded sessions, which reads as
+  // broken data rather than simulated data.
+  const session = useMemo(() => {
+    const kind = activityType.toLowerCase();
+    // Rough steady-state speeds and energy cost per minute by modality.
+    const [kmPerHour, kcalPerMin] =
+      kind.includes('run') ? [9, 10]
+      : kind.includes('swim') ? [2.5, 8]
+      : kind.includes('cycl') || kind.includes('bik') ? [18, 7]
+      : [5.2, 4];
+    // Effort scales both: RPE 5 is the reference point.
+    const effort = 1 + (current.rpe - 5) * 0.06;
+    return {
+      distanceKm: Math.round((current.durationMin / 60) * kmPerHour * effort * 100) / 100,
+      avgHr: Math.round(current.hrBaseline + current.rpe * 8 * effort),
+      maxHr: Math.round(current.hrBaseline + current.rpe * 8 * effort + 14),
+      calories: Math.round(current.durationMin * kcalPerMin * effort),
+    };
+  }, [activityType, current.durationMin, current.rpe, current.hrBaseline]);
 
   const send = async () => {
     setState('sending');
@@ -173,6 +206,10 @@ export default function WearableSimulatorModal({
       activityType,
       durationMin: current.durationMin,
       rpe: current.rpe,
+      distanceKm: session.distanceKm,
+      avgHr: session.avgHr,
+      maxHr: session.maxHr,
+      calories: session.calories,
       timestamp: stamp,
     });
 

@@ -446,6 +446,12 @@ export interface CheckInDetails {
   // date, so without it a simulated check-in lands on today while the readings
   // sit in the future and its pain never reaches the model.
   timestamp?: string;
+  // Regenerate the Gemini session as part of this check-in. Set by the daily
+  // check-in, which is the member deliberately reporting how they feel. Left
+  // off by the wearable simulator: a demo run is many check-ins in a row and
+  // each would spend a request and several seconds on a session nobody reads
+  // between steps. Both models re-run either way.
+  refreshPlan?: boolean;
 }
 
 /**
@@ -474,6 +480,7 @@ export async function submitCheckIn(
       confidence: details.sleepQuality,
       symptoms: details.symptoms,
       ...(details.timestamp ? { timestamp: details.timestamp } : {}),
+      ...(details.refreshPlan ? { refreshPlan: true } : {}),
     });
     const p = response.prediction;
     const coach = response.coach ?? p.coach;
@@ -573,9 +580,15 @@ export async function simulateWearable(
 export interface ExerciseLog {
   activityType: string;
   durationMin: number;
-  distanceKm: number;
-  avgHr: number;
-  maxHr: number;
+  distanceKm?: number;
+  avgHr?: number;
+  maxHr?: number;
+  // Perceived exertion, 1-10. A real model feature (RPE 1-10 and its rolling
+  // mean), so a logged session that omits it gets a median imputed instead.
+  rpe?: number;
+  // Only the demo simulator sets it, so a simulated workout lands on the same
+  // simulated day as its reading and check-in rather than on today.
+  timestamp?: string;
 }
 
 /**
@@ -601,6 +614,8 @@ export async function submitExerciseLog(
       distance: log.distanceKm,
       avgHeartRate: log.avgHr,
       maxHeartRate: log.maxHr,
+      ...(log.rpe != null ? { perceivedExertion: log.rpe, rpe: log.rpe } : {}),
+      ...(log.timestamp ? { timestamp: log.timestamp } : {}),
       completed: true,
     });
     return { recorded: true };

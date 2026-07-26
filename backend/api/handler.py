@@ -224,16 +224,43 @@ sagemaker_runtime = boto3.client("sagemaker-runtime", region_name=SAGEMAKER_REGI
 # switched on deliberately.
 PLAN_PROVIDER = os.environ.get("PLAN_PROVIDER", "rules").strip().lower()
 
+# Master switch for regenerating the AI session on a check-in. The caller still
+# has to ask for it per request (refreshPlan), so this only ever takes the
+# option away - useful if LLM quota tightens again, without a redeploy.
+LLM_ON_CHECKIN = os.environ.get("LLM_ON_CHECKIN", "true").strip().lower() == "true"
 
-def _recent_history(member_id, limit=60):
-    """Newest raw timeseries items (check-ins, activities, readings) for a member.
-    Excludes PREDICTION# items — the model shouldn't be fed its own output."""
-    resp = timeseries_table.query(
-        KeyConditionExpression=Key("memberId").eq(member_id),
-        ScanIndexForward=False,
-        Limit=limit,
-    )
-    return [i for i in resp.get("Items", []) if not i["sk"].startswith("PREDICTION#")]
+
+HISTORY_TYPES = ("ACTIVITY", "READING", "CHECKIN")
+
+
+def _recent_history(member_id, per_type=25):
+    """Newest raw timeseries items (activities, readings, check-ins) for a member.
+
+    Queried per type rather than as one descending scan with a limit. The sort
+    key is TYPE#ISO8601, so a single query orders by *type* before date -
+    READING, then PREDICTION, then CHECKIN, then ACTIVITY - and the limit cuts
+    from the bottom. A member with enough readings, predictions and check-ins
+    to fill it lost every ACTIVITY item, so the model saw no workouts at all:
+    duration, exertion, completion rate and cumulative load were imputed, and
+    the plan envelope fell back to its default anchor.
+
+    It also degraded over time. PREDICTION# items are excluded here, but under
+    the old query they were fetched first and filtered afterwards, so every
+    check-in wrote another prediction that consumed part of the budget and
+    pushed real history further out of reach.
+
+    Predictions are never included: the model must not be fed its own output.
+    """
+    items = []
+    for prefix in HISTORY_TYPES:
+        resp = timeseries_table.query(
+            KeyConditionExpression=Key("memberId").eq(member_id)
+            & Key("sk").begins_with(f"{prefix}#"),
+            ScanIndexForward=False,   # newest first within each type
+            Limit=per_type,
+        )
+        items.extend(resp.get("Items", []))
+    return items
 
 
 def _latest_checkin_for_prompt(history):
@@ -486,8 +513,18 @@ def handle_checkin(event):
     }
     timeseries_table.put_item(Item=_to_dynamo(item))
 
-    # Fresh inference after new data (mock until SAGEMAKER_ENDPOINT is configured)
-    prediction = get_prediction(member_id)
+    # Fresh inference after new data (mock until SAGEMAKER_ENDPOINT is
+    # configured). Both models always re-run; the AI session is only
+    # regenerated when the caller asks.
+    #
+    # The daily check-in asks, because that is the member deliberately telling
+    # the system how they feel and the moment the session should change. The
+    # wearable simulator does not: a demo run is many check-ins in a row, and
+    # each would spend a request and add several seconds per step for a
+    # session nobody reads between steps. The simulator still shows the models
+    # reacting - readiness, setback risk and the deterministic plan all move.
+    refresh_plan = bool(body.get("refreshPlan")) and LLM_ON_CHECKIN
+    prediction = get_prediction(member_id, use_llm=refresh_plan)
     return _response(201, {
         "status": "recorded",
         "checkinSk": item["sk"],
@@ -505,7 +542,12 @@ def handle_activity(event):
     if not member_id:
         return _response(400, {"error": "memberId is required"})
 
-    ts = _now_iso()
+    # Optional explicit timestamp, mirroring /checkins and /wearables/simulate.
+    # inference.py keys sessions by date, so a simulated workout must be able to
+    # land on the same simulated day as the reading and check-in it belongs
+    # with; defaulted to now it would form a separate session on today's date
+    # and its duration and RPE would never reach the same feature row.
+    ts = body.get("timestamp") or _now_iso()
     duration = body.get("durationMinutes", body.get("durationMin"))
     distance = body.get("distanceKm", body.get("distance"))
     avg_heart_rate = body.get("avgHeartRate", body.get("avgHr"))

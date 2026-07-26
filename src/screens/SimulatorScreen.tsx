@@ -28,6 +28,7 @@ export default function SimulatorScreen({ navigation, route }: any) {
   // readings — for someone whose real VO2 is 51 that lands as a sudden crash
   // and the model reacts to an artefact of the demo rather than the scenario.
   const [baseline, setBaseline] = useState<Partial<WearableBaseline> | undefined>();
+  const [activityType, setActivityType] = useState('Walking');
 
   const loadBaseline = React.useCallback(() => {
     fetchDashboardData(entityNumber)
@@ -37,6 +38,11 @@ export default function SimulatorScreen({ navigation, route }: any) {
         if (d.heart?.hrvMs != null) seed.hrvMs = d.heart.hrvMs;
         if (d.sleep?.latestHours != null) seed.sleepHours = d.sleep.latestHours;
         if (d.vo2_max_current != null) seed.vo2max = Math.round(d.vo2_max_current * 10) / 10;
+        // The session they last actually did, so a simulated one continues
+        // their history instead of switching sport mid-trend.
+        if (d.strain?.lastWorkoutMin != null) seed.durationMin = d.strain.lastWorkoutMin;
+        if (d.strain?.avgRpe != null) seed.rpe = Math.round(d.strain.avgRpe);
+        if (d.strain?.lastWorkoutType) setActivityType(d.strain.lastWorkoutType);
         setBaseline(seed);
       })
       .catch(() => {});
@@ -123,6 +129,7 @@ export default function SimulatorScreen({ navigation, route }: any) {
         <WearableSimulatorModal
           visible={wearableDemoVisible}
           baseline={baseline}
+          activityType={activityType}
           // Re-seed after each applied step so reopening continues from where
           // the member now is rather than replaying from the original values.
           onApplied={loadBaseline}

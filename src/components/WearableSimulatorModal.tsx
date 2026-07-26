@@ -9,14 +9,19 @@
 //        -> POST /wearables/simulate   (READING# item)
 //   pain / fatigue
 //        -> POST /checkins             (CHECKIN# item)
-// RPE is deliberately NOT submitted: it belongs to POST /activities, and no
-// activity happens in a wearable step. It is shown as context only.
+//   the session itself (duration, RPE)
+//        -> POST /activities           (ACTIVITY# item)
+//
+// All three carry the same simulated timestamp. inference.py keys sessions by
+// date, so they have to land on one simulated day to be read as one session —
+// split across dates the workout would form a session of its own and its
+// duration and exertion would never share a feature row with the reading.
 
 import React, { useMemo, useState } from 'react';
 import {
   Modal, View, Text, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator,
 } from 'react-native';
-import { simulateWearable, submitCheckIn, WearableReading } from '../api';
+import { simulateWearable, submitCheckIn, submitExerciseLog, WearableReading } from '../api';
 
 export type ScenarioKey = 'improving' | 'stable' | 'declining' | 'setback';
 
@@ -30,11 +35,19 @@ export interface WearableBaseline {
   activeMinutes: number;
   pain: number;
   fatigue: number;
+  // The session the member actually completed that day. Written as an
+  // ACTIVITY# item so duration, exertion and completion rate move with the
+  // trend — without it a "declining" run showed worse sleep and HRV while the
+  // member's training history sat frozen on their last real workout, and the
+  // envelope stayed anchored to it.
+  durationMin: number;
+  rpe: number;
 }
 
 const DEFAULT_BASELINE: WearableBaseline = {
   restingHr: 58, hrBaseline: 56, hrvMs: 42, sleepHours: 7.2,
   vo2max: 38.2, steps: 6200, activeMinutes: 28, pain: 2, fatigue: 2,
+  durationMin: 25, rpe: 5,
 };
 
 // Deterministic per-step deltas. No randomness: the same scenario always
@@ -42,28 +55,29 @@ const DEFAULT_BASELINE: WearableBaseline = {
 const SCENARIOS: Record<ScenarioKey, { label: string; blurb: string; color: string; delta: Partial<WearableBaseline> }> = {
   improving: {
     label: 'Improving', blurb: 'Recovering well', color: '#16A34A',
-    delta: { restingHr: -2, hrvMs: +4, sleepHours: +0.4, vo2max: +0.3, steps: +800, activeMinutes: +5, pain: -1, fatigue: -1 },
+    delta: { restingHr: -2, hrvMs: +4, sleepHours: +0.4, vo2max: +0.3, steps: +800, activeMinutes: +5, pain: -1, fatigue: -1, durationMin: +5, rpe: -0.5 },
   },
   stable: {
     label: 'Stable', blurb: 'Holding steady', color: '#0284C7',
-    delta: { restingHr: 0, hrvMs: +1, sleepHours: +0.1, vo2max: +0.05, steps: +100, activeMinutes: +1, pain: 0, fatigue: 0 },
+    delta: { restingHr: 0, hrvMs: +1, sleepHours: +0.1, vo2max: +0.05, steps: +100, activeMinutes: +1, pain: 0, fatigue: 0, durationMin: +1, rpe: 0 },
   },
   declining: {
     label: 'Declining', blurb: 'Drifting the wrong way', color: '#D97706',
-    delta: { restingHr: +3, hrvMs: -5, sleepHours: -0.6, vo2max: -0.2, steps: -900, activeMinutes: -6, pain: +1, fatigue: +1 },
+    delta: { restingHr: +3, hrvMs: -5, sleepHours: -0.6, vo2max: -0.2, steps: -900, activeMinutes: -6, pain: +1, fatigue: +1, durationMin: -5, rpe: +1 },
   },
   setback: {
     // pain +5 takes a step-1 setback to 7, which is where the model flips to
     // REDUCE. At +4 it lands on 6 and stays MAINTAIN, so a single click would
     // move only the risk number and the demo would fall flat.
     label: 'Setback', blurb: 'Acute regression', color: '#DC2626',
-    delta: { restingHr: +8, hrvMs: -12, sleepHours: -1.5, vo2max: -0.5, steps: -2500, activeMinutes: -15, pain: +5, fatigue: +5 },
+    delta: { restingHr: +8, hrvMs: -12, sleepHours: -1.5, vo2max: -0.5, steps: -2500, activeMinutes: -15, pain: +5, fatigue: +5, durationMin: -12, rpe: +2 },
   },
 };
 
 const BOUNDS: Record<keyof WearableBaseline, [number, number]> = {
   restingHr: [40, 110], hrBaseline: [40, 110], hrvMs: [10, 140], sleepHours: [3, 10],
   vo2max: [15, 65], steps: [0, 25000], activeMinutes: [0, 180], pain: [0, 10], fatigue: [0, 10],
+  durationMin: [0, 120], rpe: [1, 10],
 };
 
 const clamp = (key: keyof WearableBaseline, value: number) => {
@@ -87,6 +101,7 @@ type SendState = 'idle' | 'sending' | 'done';
 interface StepResult {
   wearable: boolean;
   checkin: boolean;
+  activityLogged: boolean;
   readiness?: string;
   activity?: string;
   duration?: number;
@@ -99,10 +114,16 @@ interface Props {
   onClose: () => void;
   memberId: string;
   baseline?: Partial<WearableBaseline>;
+  // What the member actually does. Seeded from their last logged workout so a
+  // simulated session continues their own history rather than switching them
+  // to a different sport mid-trend.
+  activityType?: string;
   onApplied?: () => void;
 }
 
-export default function WearableSimulatorModal({ visible, onClose, memberId, baseline, onApplied }: Props) {
+export default function WearableSimulatorModal({
+  visible, onClose, memberId, baseline, activityType = 'Walking', onApplied,
+}: Props) {
   const [scenario, setScenario] = useState<ScenarioKey>('improving');
   const [cadence, setCadence] = useState<1 | 7>(1);
   const [step, setStep] = useState(1);
@@ -138,12 +159,27 @@ export default function WearableSimulatorModal({ visible, onClose, memberId, bas
       hrvMs: current.hrvMs,
     };
 
-    // Telemetry first, then the check-in, so the inference triggered by the
-    // check-in already sees the new reading.
+    // Telemetry and the session first, then the check-in last, so the
+    // inference the check-in triggers already sees both.
     const wearable = await simulateWearable(memberId, reading);
+
+    // The workout the member completed that day. Without it the trend moved
+    // sleep, HRV and pain while training history stayed frozen on their last
+    // real session, so duration, exertion, completion rate and the envelope's
+    // anchor never responded to the scenario. A setback step writes a short,
+    // hard session rather than none: the member trained and it went badly,
+    // which is what the readings describe.
+    const activity = await submitExerciseLog(memberId, {
+      activityType,
+      durationMin: current.durationMin,
+      rpe: current.rpe,
+      timestamp: stamp,
+    });
+
     // Same timestamp as the reading: inference.py keys sessions by date, so
     // both must land on the same simulated day to be seen as one session.
     // submitCheckIn takes a 1-10 energy value and sends fatigue = 11 - energy.
+    // No refreshPlan: a run is many steps and each would spend an LLM request.
     const energy = Math.min(10, Math.max(1, 11 - current.fatigue));
     const checkin = await submitCheckIn(memberId, {
       soreness: current.pain,
@@ -157,6 +193,7 @@ export default function WearableSimulatorModal({ visible, onClose, memberId, bas
     setResult({
       wearable: wearable.recorded,
       checkin: checkin.recorded,
+      activityLogged: activity.recorded,
       readiness: p?.readiness,
       activity: p?.recommended_activity,
       duration: p?.duration_minutes,
@@ -177,6 +214,8 @@ export default function WearableSimulatorModal({ visible, onClose, memberId, bas
     { key: 'vo2max', label: 'VO₂ max', unit: '', higherIsBetter: true },
     { key: 'steps', label: 'Steps', unit: '', higherIsBetter: true },
     { key: 'activeMinutes', label: 'Active minutes', unit: 'min', higherIsBetter: true },
+    { key: 'durationMin', label: 'Session length', unit: 'min', higherIsBetter: true },
+    { key: 'rpe', label: 'Perceived exertion', unit: '/ 10', higherIsBetter: false },
     { key: 'pain', label: 'Pain', unit: '/ 10', higherIsBetter: false },
     { key: 'fatigue', label: 'Fatigue', unit: '/ 10', higherIsBetter: false },
   ];
@@ -250,8 +289,8 @@ export default function WearableSimulatorModal({ visible, onClose, memberId, bas
             </View>
 
             <Text style={s.note}>
-              Perceived exertion (RPE) belongs to the activity flow and is not submitted in this
-              demo version — no workout is being logged.
+              Each step writes a wearable reading, a completed {activityType.toLowerCase()} session
+              and a check-in, all on the same simulated date, then re-runs both models.
             </Text>
 
             {state === 'done' && result && (

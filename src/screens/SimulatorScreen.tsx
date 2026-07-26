@@ -12,8 +12,8 @@ import {
   KeyboardAvoidingView 
 } from 'react-native';
 import { Sparkles, ArrowLeft, ShieldCheck, AlertTriangle, Send, CheckCircle2, XCircle, AlertCircle } from 'lucide-react-native';
-import { evaluateActivity } from '../api';
-import WearableSimulatorModal from '../components/WearableSimulatorModal';
+import { evaluateActivity, fetchDashboardData } from '../api';
+import WearableSimulatorModal, { WearableBaseline } from '../components/WearableSimulatorModal';
 
 export default function SimulatorScreen({ navigation, route }: any) {
   const entityNumber = route?.params?.entityNumber || 'ENT000122';
@@ -21,6 +21,28 @@ export default function SimulatorScreen({ navigation, route }: any) {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
+
+  // The simulator steps a member's wearable trend forward, so it has to start
+  // from *their* numbers. Left unset it falls back to a generic baseline
+  // (resting HR 58, HRV 42, VO2 38.2) and writes those as the member's own
+  // readings — for someone whose real VO2 is 51 that lands as a sudden crash
+  // and the model reacts to an artefact of the demo rather than the scenario.
+  const [baseline, setBaseline] = useState<Partial<WearableBaseline> | undefined>();
+
+  const loadBaseline = React.useCallback(() => {
+    fetchDashboardData(entityNumber)
+      .then((d) => {
+        const seed: Partial<WearableBaseline> = {};
+        if (d.heart?.restingHr != null) seed.restingHr = d.heart.restingHr;
+        if (d.heart?.hrvMs != null) seed.hrvMs = d.heart.hrvMs;
+        if (d.sleep?.latestHours != null) seed.sleepHours = d.sleep.latestHours;
+        if (d.vo2_max_current != null) seed.vo2max = Math.round(d.vo2_max_current * 10) / 10;
+        setBaseline(seed);
+      })
+      .catch(() => {});
+  }, [entityNumber]);
+
+  React.useEffect(loadBaseline, [loadBaseline]);
 
   // Quick preset questions for a fast, foolproof demo click
   const presetQuestions = [
@@ -100,6 +122,10 @@ export default function SimulatorScreen({ navigation, route }: any) {
 
         <WearableSimulatorModal
           visible={wearableDemoVisible}
+          baseline={baseline}
+          // Re-seed after each applied step so reopening continues from where
+          // the member now is rather than replaying from the original values.
+          onApplied={loadBaseline}
           onClose={() => setWearableDemoVisible(false)}
           memberId={entityNumber}
         />

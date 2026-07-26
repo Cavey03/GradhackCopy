@@ -26,6 +26,7 @@ export interface MemberProfile {
 
   // --- recovery ---
   recoveryGoal?: string;
+  recoveryGoalDetails?: RecoveryGoal;
   activityBaseline?: string;
 
   // --- clinical context (from recoveryContext) ---
@@ -41,6 +42,14 @@ export interface MemberProfile {
   clinicianCleared?: string;
   contraindicationFlag?: string;
   intakePainScore?: number;
+}
+
+export interface RecoveryGoal {
+  type: 'distance' | 'duration' | 'vo2';
+  activity?: 'walk' | 'run' | 'swim';
+  target: number;
+  unit: 'km' | 'min' | 'mL/kg/min';
+  startedAt?: string;
 }
 
 export interface ActivityItem {

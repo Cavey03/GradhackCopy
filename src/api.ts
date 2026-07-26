@@ -9,6 +9,7 @@ import {
   ExercisePlan,
   WeekPlanDay,
   PlanEnvelope,
+  RecoveryGoal,
 } from './mockData';
 
 // Amplify builds supply this; a laptop running `npx expo start` usually does
@@ -134,6 +135,7 @@ interface BackendDashboard {
     medicalAidPlan?: string;
     joinDate?: string;
     recoveryGoal?: string;
+    recoveryGoalDetails?: RecoveryGoal;
     activityBaseline?: string;
     recoveryContext?: {
       conditionCategory?: string;
@@ -174,6 +176,7 @@ export interface OnboardingProfile {
   firstName: string;
   surname: string;
   recoveryGoal: string;
+  recoveryGoalDetails: RecoveryGoal;
   activityBaseline: string;
   activityPreference: 'walk' | 'run' | 'swim';
   recoveryContext: {
@@ -370,6 +373,7 @@ function adaptDashboard(d: BackendDashboard): RecoveryData {
       medicalAidPlan: d.member.medicalAidPlan,
       joinDate: d.member.joinDate,
       recoveryGoal: d.member.recoveryGoal,
+      recoveryGoalDetails: d.member.recoveryGoalDetails,
       activityBaseline: d.member.activityBaseline,
 
       conditionCategory: ctx.conditionCategory,
@@ -472,6 +476,26 @@ export async function createMemberProfile(
   } catch (error) {
     console.warn('⚠️ Member onboarding failed.', error);
     return { created: false, error: 'Could not create this recovery profile.' };
+  }
+}
+
+export async function updateRecoveryGoal(
+  memberId: string,
+  goal: RecoveryGoal,
+  goalStatement?: string,
+): Promise<{ updated: boolean }> {
+  const activity = goal.activity ? title(goal.activity) : '';
+  const generatedStatement =
+    goal.type === 'vo2'
+      ? `Reach a VO₂ max of ${goal.target} ${goal.unit}`
+      : `${activity} ${goal.target} ${goal.unit}`;
+  const recoveryGoal = goalStatement?.trim() || generatedStatement;
+  try {
+    await request('POST', '/goals', { memberId, recoveryGoal, recoveryGoalDetails: goal });
+    return { updated: true };
+  } catch (error) {
+    console.warn('⚠️ Recovery goal update failed.', error);
+    return { updated: false };
   }
 }
 

@@ -1,8 +1,8 @@
 // src/screens/DashboardScreen.tsx
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
-import { OPTIMAL_STATE, RecoveryData, ActivityItem } from '../mockData';
-import { fetchDashboardData, submitCheckIn, submitExerciseLog, generatePlan } from '../api';
+import { OPTIMAL_STATE, RecoveryData, ActivityItem, RecoveryGoal } from '../mockData';
+import { fetchDashboardData, submitCheckIn, submitExerciseLog, generatePlan, updateRecoveryGoal } from '../api';
 import { 
   ShieldCheck, 
   AlertTriangle, 
@@ -28,6 +28,7 @@ import TrendChart from '../components/TrendChart';
 import DailyCheckInModal from '../components/DailyCheckInModal';
 import VitalityScoreRing from '../components/VitalityScoreRing';
 import LogExerciseDrawer, { ExerciseLogPayload } from '../components/LogExerciseDrawer';
+import RecoveryGoalModal from '../components/RecoveryGoalModal';
 
 type CategoryType = 'Recovery' | 'Strain' | 'Sleep' | 'Heart' | 'AI Plan' | 'Profile';
 
@@ -164,6 +165,34 @@ function contextualNudges(
   return nudges.slice(0, 2);
 }
 
+function recoveryGoalProgress(data: RecoveryData) {
+  const goal = data.member?.recoveryGoalDetails;
+  if (!goal) return null;
+  const matchingActivities = (data.recentActivities ?? []).filter((activity) => {
+    if (!goal.activity) return true;
+    const name = activity.name.toLowerCase();
+    return (
+      (goal.activity === 'walk' && name.includes('walk')) ||
+      (goal.activity === 'run' && (name.includes('run') || name.includes('jog'))) ||
+      (goal.activity === 'swim' && name.includes('swim'))
+    );
+  });
+  const current =
+    goal.type === 'distance'
+      ? Math.max(0, ...matchingActivities.map((activity) => activity.distanceKm ?? 0))
+      : goal.type === 'duration'
+        ? Math.max(0, ...matchingActivities.map((activity) => activity.durationMin ?? 0))
+        : (data.vo2ReadingCount ?? 0) > 0
+          ? data.vo2_max_current
+          : 0;
+  return {
+    goal,
+    current,
+    percent: Math.min(100, Math.round((current / goal.target) * 100)),
+    achieved: current >= goal.target,
+  };
+}
+
 function fourWeekOverview(data: RecoveryData, progress: ReturnType<typeof activityProgress>) {
   const activeDays = (data.weekPlan ?? []).filter(
     (day) => day.activity !== 'rest' && day.durationMinutes > 0,
@@ -297,6 +326,7 @@ export default function DashboardScreen({ navigation, route }: any) {
   const [activeCategory, setActiveCategory] = useState<CategoryType>('Recovery');
   const [checkInVisible, setCheckInVisible] = useState(false);
   const [logDrawerVisible, setLogDrawerVisible] = useState(false);
+  const [goalModalVisible, setGoalModalVisible] = useState(false);
   const [dismissedNudges, setDismissedNudges] = useState<string[]>([]);
 
   // "Optimal" vs "at risk" is derived directly from the data
@@ -325,6 +355,17 @@ export default function DashboardScreen({ navigation, route }: any) {
     (nudge) => !dismissedNudges.includes(nudge.id),
   );
   const progressionOverview = fourWeekOverview(data, progress);
+  const goalProgress = recoveryGoalProgress(data);
+  const hasValidatedGeminiRationale =
+    data.coachSource === 'gemini' && data.planSource === 'gemini';
+  const planRationale = hasValidatedGeminiRationale
+    ? data.explainability.bedrock_rationale
+    : data.exercisePlan
+      ? `${titleCase(data.recovery_label || 'Maintain')} was the readiness model’s strongest outcome. ` +
+        `${data.explainability.primary_factor} was the leading signal, so the rules-based plan keeps the session ` +
+        `within ${data.planEnvelope?.max_total_minutes ?? data.duration_minutes} minutes at no more than ` +
+        `${titleCase(data.planEnvelope?.max_intensity ?? data.intensity)} intensity.`
+      : null;
 
   // If Login didn't pass data (e.g. deep link during dev), fetch it live
   useEffect(() => {
@@ -645,6 +686,56 @@ export default function DashboardScreen({ navigation, route }: any) {
                 })}
               </View>
             )}
+
+            <View style={styles.card}>
+              <View style={styles.goalHeader}>
+                <View style={styles.cardHeaderRow}>
+                  <Target size={17} color="#E11082" />
+                  <Text style={[styles.cardTitle, { marginLeft: 6 }]}>RECOVERY GOAL</Text>
+                </View>
+                {goalProgress?.achieved && <Text style={styles.goalAchievedBadge}>ACHIEVED</Text>}
+              </View>
+
+              {goalProgress ? (
+                <>
+                  <Text style={styles.goalTitle}>{data.member?.recoveryGoal}</Text>
+                  <View style={styles.goalValues}>
+                    <Text style={styles.goalCurrent}>
+                      {Math.round(goalProgress.current * 10) / 10}{' '}
+                      <Text style={styles.goalUnit}>{goalProgress.goal.unit}</Text>
+                    </Text>
+                    <Text style={styles.goalTarget}>
+                      Target {goalProgress.goal.target} {goalProgress.goal.unit}
+                    </Text>
+                  </View>
+                  <View style={styles.goalTrack}>
+                    <View style={[styles.goalFill, { width: `${goalProgress.percent}%` }]} />
+                  </View>
+                  <Text style={styles.goalProgressText}>
+                    {goalProgress.achieved
+                      ? 'Goal reached using recorded evidence. Your next goal will still be subject to current recovery limits.'
+                      : `${goalProgress.percent}% complete · based on your best recent ${
+                          goalProgress.goal.type === 'vo2' ? 'measured VO₂ value' : 'matching activity'
+                        }`}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.goalTitle}>
+                    {data.member?.recoveryGoal || 'Choose a measurable recovery goal'}
+                  </Text>
+                  <Text style={styles.goalProgressText}>
+                    This profile does not yet have a measurable target. Add one to track progress from recorded activities or VO₂ readings.
+                  </Text>
+                </>
+              )}
+
+              <TouchableOpacity style={styles.goalAction} onPress={() => setGoalModalVisible(true)}>
+                <Text style={styles.goalActionText}>
+                  {goalProgress?.achieved ? 'Choose next goal' : goalProgress ? 'Change goal' : 'Set measurable goal'}
+                </Text>
+              </TouchableOpacity>
+            </View>
 
             <View style={styles.card}>
               <View style={styles.progressHeader}>
@@ -1235,6 +1326,38 @@ export default function DashboardScreen({ navigation, route }: any) {
                   </View>
                 )}
 
+                {/* PROVISIONAL WEEK */}
+                {!!data.weekPlan?.length && (
+                  <View style={styles.card}>
+                    <Text style={styles.cardTitle}>THIS WEEK (PROVISIONAL)</Text>
+                    <Text style={styles.weekNote}>
+                      Day 1 follows today's model prediction. Days 2–7 are a provisional shape,
+                      not a forecast, and are rebuilt each time the plan is regenerated.
+                    </Text>
+                    {data.weekPlan.map((day) => {
+                      const resting = day.activity === 'rest' || day.durationMinutes === 0;
+                      return (
+                        <View key={day.day} style={styles.weekRow}>
+                          <Text style={styles.weekDay}>Day {day.day}</Text>
+                          <View style={styles.weekBody}>
+                            <Text style={[styles.weekActivity, resting && styles.weekResting]}>
+                              {resting
+                                ? 'Rest'
+                                : `${day.durationMinutes} min ${titleCase(day.activity)}`}
+                            </Text>
+                            {!!day.focus && !resting && (
+                              <Text style={styles.weekFocus}>{day.focus}</Text>
+                            )}
+                          </View>
+                          <Text style={styles.weekIntensity}>
+                            {resting ? '—' : titleCase(day.intensity)}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+
                 <View style={styles.card}>
                   <View style={styles.progressionHeader}>
                     <View style={styles.cardHeaderRow}>
@@ -1311,38 +1434,6 @@ export default function DashboardScreen({ navigation, route }: any) {
                     </Text>
                   </View>
                 </View>
-
-                {/* PROVISIONAL WEEK */}
-                {!!data.weekPlan?.length && (
-                  <View style={styles.card}>
-                    <Text style={styles.cardTitle}>THIS WEEK (PROVISIONAL)</Text>
-                    <Text style={styles.weekNote}>
-                      Day 1 follows today's model prediction. Days 2–7 are a provisional shape,
-                      not a forecast, and are rebuilt each time the plan is regenerated.
-                    </Text>
-                    {data.weekPlan.map((day) => {
-                      const resting = day.activity === 'rest' || day.durationMinutes === 0;
-                      return (
-                        <View key={day.day} style={styles.weekRow}>
-                          <Text style={styles.weekDay}>Day {day.day}</Text>
-                          <View style={styles.weekBody}>
-                            <Text style={[styles.weekActivity, resting && styles.weekResting]}>
-                              {resting
-                                ? 'Rest'
-                                : `${day.durationMinutes} min ${titleCase(day.activity)}`}
-                            </Text>
-                            {!!day.focus && !resting && (
-                              <Text style={styles.weekFocus}>{day.focus}</Text>
-                            )}
-                          </View>
-                          <Text style={styles.weekIntensity}>
-                            {resting ? '—' : titleCase(day.intensity)}
-                          </Text>
-                        </View>
-                      );
-                    })}
-                  </View>
-                )}
               </>
             ) : (
               <View style={[styles.card, styles.highlightCard]}>
@@ -1356,13 +1447,38 @@ export default function DashboardScreen({ navigation, route }: any) {
               </View>
             )}
 
-            <View style={styles.card}>
-              <View style={styles.cardHeaderRow}>
-                <Sparkles size={16} color="#002B49" />
-                <Text style={[styles.cardTitle, { marginLeft: 6 }]}>AI RATIONALE & INSIGHTS</Text>
+            {!!planRationale && (
+              <View style={styles.card}>
+                <View style={styles.rationaleHeader}>
+                  <View style={styles.cardHeaderRow}>
+                    {hasValidatedGeminiRationale ? (
+                      <Sparkles size={16} color="#6366F1" />
+                    ) : (
+                      <ShieldCheck size={16} color="#10B981" />
+                    )}
+                    <Text style={[styles.cardTitle, { marginLeft: 6 }]}>WHY THIS PLAN?</Text>
+                  </View>
+                  <Text
+                    style={[
+                      styles.rationaleSource,
+                      hasValidatedGeminiRationale
+                        ? styles.rationaleSourceGemini
+                        : styles.rationaleSourceRules,
+                    ]}
+                  >
+                    {hasValidatedGeminiRationale ? 'GEMINI · VALIDATED' : 'MODEL + SAFETY RULES'}
+                  </Text>
+                </View>
+                <Text style={styles.rationaleText}>{planRationale}</Text>
+                {!hasValidatedGeminiRationale && (
+                  <Text style={styles.rationaleNote}>
+                    {data.planSource === 'rules'
+                      ? 'Gemini’s proposed plan was unavailable or did not pass validation, so the safe rules-based plan is shown.'
+                      : 'Gemini was not used for this plan. This explanation comes from the model outcome and validated safety limits.'}
+                  </Text>
+                )}
               </View>
-              <Text style={styles.aiSummary}>{data.ai_summary}</Text>
-            </View>
+            )}
           </>
         )}
 
@@ -1383,6 +1499,19 @@ export default function DashboardScreen({ navigation, route }: any) {
         visible={logDrawerVisible}
         onClose={() => setLogDrawerVisible(false)}
         onSubmit={handleLogExerciseSubmit}
+      />
+
+      <RecoveryGoalModal
+        visible={goalModalVisible}
+        onClose={() => setGoalModalVisible(false)}
+        currentGoal={data.member?.recoveryGoal}
+        onSave={async (goal: RecoveryGoal, goalStatement: string) => {
+          const result = await updateRecoveryGoal(entityNumber, goal, goalStatement);
+          if (!result.updated) return false;
+          const fresh = await fetchDashboardData(entityNumber).catch(() => null);
+          if (fresh) setData(fresh);
+          return true;
+        }}
       />
 
       {/* DAILY CHECK-IN MODAL */}
@@ -1589,6 +1718,36 @@ const styles = StyleSheet.create({
   nudgeMessage: { fontSize: 11, color: '#475569', lineHeight: 17, marginTop: 4 },
   nudgeAction: { alignSelf: 'flex-start', paddingTop: 9, paddingBottom: 1 },
   nudgeActionText: { fontSize: 11, fontWeight: '900' },
+  goalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  goalAchievedBadge: {
+    fontSize: 8,
+    color: '#15803D',
+    fontWeight: '900',
+    letterSpacing: 0.7,
+    backgroundColor: '#DCFCE7',
+    borderRadius: 999,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    overflow: 'hidden',
+  },
+  goalTitle: { fontSize: 16, color: '#002B49', fontWeight: '900', lineHeight: 22, marginTop: 12 },
+  goalValues: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginTop: 13 },
+  goalCurrent: { fontSize: 25, color: '#E11082', fontWeight: '900' },
+  goalUnit: { fontSize: 11, color: '#64748B', fontWeight: '700' },
+  goalTarget: { fontSize: 11, color: '#64748B', fontWeight: '800' },
+  goalTrack: { height: 8, borderRadius: 99, backgroundColor: '#F1F5F9', overflow: 'hidden', marginTop: 9 },
+  goalFill: { height: '100%', borderRadius: 99, backgroundColor: '#E11082' },
+  goalProgressText: { fontSize: 10, color: '#64748B', lineHeight: 15, marginTop: 8 },
+  goalAction: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#E11082',
+    borderRadius: 999,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    marginTop: 12,
+  },
+  goalActionText: { fontSize: 10, color: '#B60867', fontWeight: '900' },
   
   metricRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16, paddingHorizontal: 8 },
   metricBox: { flex: 1, alignItems: 'center' },
@@ -1688,6 +1847,30 @@ const styles = StyleSheet.create({
   generateBtnBusy: { backgroundColor: '#FBBF24' },
   generateBtnSmText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800', marginLeft: 6 },
   planErrorText: { fontSize: 12, color: '#DC2626', marginBottom: 12, fontWeight: '600' },
+  rationaleHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  rationaleSource: {
+    fontSize: 8,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+    borderRadius: 999,
+    paddingVertical: 4,
+    paddingHorizontal: 7,
+    overflow: 'hidden',
+  },
+  rationaleSourceGemini: { color: '#4338CA', backgroundColor: '#EEF2FF' },
+  rationaleSourceRules: { color: '#15803D', backgroundColor: '#F0FDF4' },
+  rationaleText: { fontSize: 13, color: '#334155', lineHeight: 20, marginTop: 12, fontWeight: '600' },
+  rationaleNote: {
+    fontSize: 10,
+    color: '#64748B',
+    lineHeight: 15,
+    marginTop: 10,
+    fontStyle: 'italic',
+  },
 
   // --- session hero ---
   sessionHero: { backgroundColor: '#0B1F35', borderColor: '#0B1F35' },

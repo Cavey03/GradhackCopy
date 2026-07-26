@@ -68,7 +68,8 @@ export default function OnboardingScreen({ navigation }: any) {
   const [clinicianCleared, setClinicianCleared] = useState('Yes');
   const [activityPreference, setActivityPreference] = useState<ActivityPreference>('walk');
   const [activityBaseline, setActivityBaseline] = useState('');
-  const [recoveryGoal, setRecoveryGoal] = useState('');
+  const [goalType, setGoalType] = useState<'distance' | 'duration' | 'vo2'>('distance');
+  const [goalTarget, setGoalTarget] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -77,7 +78,7 @@ export default function OnboardingScreen({ navigation }: any) {
       ? !!firstName.trim() && !!surname.trim()
       : step === 2
         ? !!diagnosisOrEvent.trim()
-        : !!activityBaseline.trim() && !!recoveryGoal.trim();
+        : !!activityBaseline.trim() && Number(goalTarget) > 0;
 
   const next = () => {
     setError(null);
@@ -92,10 +93,23 @@ export default function OnboardingScreen({ navigation }: any) {
     if (!stepValid || submitting) return;
     setSubmitting(true);
     setError(null);
+    const target = Number(goalTarget);
+    const unit = goalType === 'distance' ? 'km' : goalType === 'duration' ? 'min' : 'mL/kg/min';
+    const recoveryGoal =
+      goalType === 'vo2'
+        ? `Reach a VO₂ max of ${target} ${unit}`
+        : `${activityPreference === 'walk' ? 'Walk' : activityPreference === 'run' ? 'Run' : 'Swim'} ${target} ${unit}`;
     const result = await createMemberProfile({
       firstName: firstName.trim(),
       surname: surname.trim(),
-      recoveryGoal: recoveryGoal.trim(),
+      recoveryGoal,
+      recoveryGoalDetails: {
+        type: goalType,
+        activity: goalType === 'vo2' ? undefined : activityPreference,
+        target,
+        unit,
+        startedAt: new Date().toISOString(),
+      },
       activityBaseline: activityBaseline.trim(),
       activityPreference,
       recoveryContext: {
@@ -227,12 +241,27 @@ export default function OnboardingScreen({ navigation }: any) {
                 multiline
               />
               <Text style={styles.label}>RECOVERY GOAL *</Text>
+              <ChoiceRow
+                options={[
+                  ['distance', 'Target distance'],
+                  ['duration', 'Session duration'],
+                  ['vo2', 'VO₂ max'],
+                ]}
+                value={goalType}
+                onChange={(value) => setGoalType(value as typeof goalType)}
+              />
               <TextInput
-                style={[styles.input, styles.textArea]}
-                value={recoveryGoal}
-                onChangeText={setRecoveryGoal}
-                placeholder="e.g. Return to a comfortable 5 km walk"
-                multiline
+                style={styles.input}
+                value={goalTarget}
+                onChangeText={setGoalTarget}
+                placeholder={
+                  goalType === 'distance'
+                    ? 'Target kilometres, e.g. 5'
+                    : goalType === 'duration'
+                      ? 'Target minutes, e.g. 30'
+                      : 'Target VO₂ max, e.g. 40'
+                }
+                keyboardType="decimal-pad"
               />
               <View style={styles.safetyNote}>
                 <Check size={16} color="#15803D" />

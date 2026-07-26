@@ -21,6 +21,7 @@ export interface ExerciseLogPayload {
   distanceKm: number;
   avgHr: number;
   maxHr: number;
+  calories: number;
 }
 
 interface Props {
@@ -35,10 +36,11 @@ export default function LogExerciseDrawer({ visible, onClose, onSubmit }: Props)
   const [distanceKm, setDistanceKm] = useState('');
   const [avgHr, setAvgHr] = useState('');
   const [maxHr, setMaxHr] = useState('');
+  const [calories, setCalories] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
   const handleSave = () => {
-    if (!durationMin || !distanceKm || !avgHr || !maxHr) {
+    if (!durationMin || !distanceKm || !avgHr || !maxHr || !calories) {
       setErrorMsg('Please fill in all metrics before saving.');
       return;
     }
@@ -49,6 +51,7 @@ export default function LogExerciseDrawer({ visible, onClose, onSubmit }: Props)
       distanceKm: parseFloat(distanceKm),
       avgHr: parseInt(avgHr, 10),
       maxHr: parseInt(maxHr, 10),
+      calories: parseInt(calories, 10),
     };
 
     setErrorMsg('');
@@ -63,6 +66,7 @@ export default function LogExerciseDrawer({ visible, onClose, onSubmit }: Props)
     setDistanceKm('');
     setAvgHr('');
     setMaxHr('');
+    setCalories('');
     setErrorMsg('');
   };
 
@@ -168,7 +172,7 @@ export default function LogExerciseDrawer({ visible, onClose, onSubmit }: Props)
 
               <View style={styles.inputFlex}>
                 <Text style={styles.label}>
-                  <Flame size={12} color="#DC2626" /> Max HR (bpm)
+                  <Heart size={12} color="#DC2626" /> Max HR (bpm)
                 </Text>
                 <TextInput
                   style={styles.input}
@@ -178,6 +182,20 @@ export default function LogExerciseDrawer({ visible, onClose, onSubmit }: Props)
                   onChangeText={setMaxHr}
                 />
               </View>
+            </View>
+
+            {/* 4. ENERGY EXPENDITURE */}
+            <View>
+              <Text style={styles.label}>
+                <Flame size={12} color="#F97316" /> Calories burned (kcal)
+              </Text>
+              <TextInput
+                style={styles.input}
+                placeholder="e.g. 320"
+                keyboardType="numeric"
+                value={calories}
+                onChangeText={setCalories}
+              />
             </View>
 
             {/* SAVE BUTTON */}

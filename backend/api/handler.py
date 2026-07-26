@@ -490,6 +490,7 @@ def handle_onboarding(event):
         "recoveryContext": body.get("recoveryContext", {}),
         "goals": body.get("goals", []),
         "recoveryGoal": body.get("recoveryGoal"),
+        "recoveryGoalDetails": body.get("recoveryGoalDetails"),
         "activityBaseline": body.get("activityBaseline"),
         "activityPreference": body.get("activityPreference", "walk"),
         "createdAt": _now_iso(),
@@ -514,6 +515,36 @@ def handle_onboarding(event):
                 return _response(409, {"error": "member_already_exists", "memberId": member_id})
 
     return _response(503, {"error": "member_id_generation_failed"})
+
+
+def handle_goal(event):
+    body = _parse_body(event)
+    if body is None:
+        return _response(400, {"error": "invalid_json"})
+    member_id = body.get("memberId")
+    goal = body.get("recoveryGoalDetails")
+    if not member_id or not isinstance(goal, dict):
+        return _response(400, {"error": "memberId and recoveryGoalDetails are required"})
+    if goal.get("type") not in ("distance", "duration", "vo2"):
+        return _response(400, {"error": "invalid_goal_type"})
+    try:
+        target = float(goal.get("target"))
+    except (TypeError, ValueError):
+        return _response(400, {"error": "invalid_goal_target"})
+    if target <= 0:
+        return _response(400, {"error": "invalid_goal_target"})
+
+    goal = {**goal, "target": target, "startedAt": _now_iso()}
+    members_table.update_item(
+        Key={"memberId": member_id},
+        UpdateExpression="SET recoveryGoal = :label, recoveryGoalDetails = :goal",
+        ExpressionAttributeValues={
+            ":label": body.get("recoveryGoal", ""),
+            ":goal": _to_dynamo(goal),
+        },
+        ConditionExpression="attribute_exists(memberId)",
+    )
+    return _response(200, {"status": "updated", "recoveryGoalDetails": goal})
 
 
 def handle_checkin(event):
@@ -758,6 +789,7 @@ MOCK_ROUTES = {
 
 REAL_ROUTES = {
     ("POST", "/onboarding"): handle_onboarding,
+    ("POST", "/goals"): handle_goal,
     ("POST", "/checkins"): handle_checkin,
     ("POST", "/activities"): handle_activity,
     ("POST", "/wearables/simulate"): handle_wearable_simulate,
